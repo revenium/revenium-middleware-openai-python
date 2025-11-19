@@ -20,7 +20,8 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ### 2. Install Dependencies
 
 ```bash
-pip install revenium-middleware-openai openai python-dotenv
+# Install packages (run after activation)
+pip install revenium-middleware-openai
 
 # For LangChain support
 pip install revenium-middleware-openai[langchain]
@@ -49,27 +50,23 @@ Get your Revenium API key: https://app.revenium.ai
 
 ### 4. Run Examples
 
-**If you cloned from GitHub:**
+Download and run examples from the repository:
 
 ```bash
-python examples/getting_started.py
-python examples/openai_basic.py
-python examples/openai_streaming.py
-python examples/azure_basic.py
-python examples/langchain_async_examples.py
+# Download an example
+curl -O https://raw.githubusercontent.com/revenium/revenium-middleware-openai-python/main/examples/getting_started.py
+
+# Run it
+python getting_started.py
 ```
 
-**If you installed via PyPI:**
-
-Examples are included in your installed package:
-
-```bash
-# Find site-packages location
-python -c "import site; print(site.getsitepackages()[0])"
-
-# Run examples from installed package
-python /path/to/site-packages/revenium_middleware_openai/examples/getting_started.py
-```
+**Available examples to download:**
+- `getting_started.py` - Simple entry point with all metadata fields
+- `openai_basic.py` - Basic chat and embeddings
+- `openai_streaming.py` - Streaming responses
+- `azure_basic.py` - Azure OpenAI integration
+- `azure_streaming.py` - Azure OpenAI streaming
+- `langchain_async_examples.py` - LangChain async integration
 
 ## Available Examples
 

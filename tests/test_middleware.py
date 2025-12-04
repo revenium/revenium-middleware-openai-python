@@ -29,18 +29,26 @@ class TestMiddleware:
         mock_response.id = "test-response-id"
         mock_response.model = "gpt-4"
 
-        # Set up usage attributes
-        mock_response.usage.prompt_tokens = 100
-        mock_response.usage.completion_tokens = 50
-        mock_response.usage.total_tokens = 150
+        # Set up usage attributes - use spec to prevent auto-creation of input_tokens
+        mock_usage = MagicMock(spec=['prompt_tokens', 'completion_tokens', 'total_tokens', 'prompt_tokens_details'])
+        mock_usage.prompt_tokens = 100
+        mock_usage.completion_tokens = 50
+        mock_usage.total_tokens = 150
 
         # Set up prompt_tokens_details for cached tokens (optional)
-        mock_response.usage.prompt_tokens_details.cached_tokens = 0
+        mock_usage.prompt_tokens_details = MagicMock()
+        mock_usage.prompt_tokens_details.cached_tokens = 0
+
+        mock_response.usage = mock_usage
 
         # Set up choices with finish_reason
         mock_choice = MagicMock()
         mock_choice.finish_reason = "stop"
         mock_response.choices = [mock_choice]
+
+        # CRITICAL FIX: Configure parse() to return self (not another MagicMock)
+        # This handles the LegacyAPIResponse.parse() code path in middleware.py
+        mock_response.parse = MagicMock(return_value=mock_response)
 
         return mock_response
 
@@ -49,14 +57,14 @@ class TestMiddleware:
         """Create a mock OpenAI embeddings response object."""
         mock_response = MagicMock()
         mock_response.model = "text-embedding-3-small"
-        
+
         # Remove the 'id' attribute since embeddings responses don't have one
         del mock_response.id
-        
+
         # Set up usage attributes (embeddings only have prompt_tokens)
         mock_response.usage.prompt_tokens = 9
         mock_response.usage.total_tokens = 9
-        
+
         # Set up embeddings data
         mock_embedding = MagicMock()
         mock_embedding.embedding = [0.1] * 1536  # Mock 1536-dimensional embedding
@@ -64,7 +72,10 @@ class TestMiddleware:
         mock_embedding.object = "embedding"
         mock_response.data = [mock_embedding]
         mock_response.object = "list"
-        
+
+        # CRITICAL FIX: Configure parse() to return self (not another MagicMock)
+        mock_response.parse = MagicMock(return_value=mock_response)
+
         return mock_response
 
     @pytest.fixture
@@ -184,6 +195,9 @@ class TestMiddleware:
             mock_choice.finish_reason = "stop"
             mock_response.choices = [mock_choice]
 
+            # CRITICAL FIX: Configure parse() to return self
+            mock_response.parse = MagicMock(return_value=mock_response)
+
             usage_data, transaction_id = extract_usage_data(
                 mock_response, OperationType.CHAT, "2023-01-01T12:00:00Z", "2023-01-01T12:00:01Z", 1000.0
             )
@@ -198,17 +212,26 @@ class TestMiddleware:
         mock_response = MagicMock()
         mock_response.id = "test-response-id"
         mock_response.model = "gpt-4"
-        mock_response.usage.prompt_tokens = 100
-        mock_response.usage.completion_tokens = 50
-        mock_response.usage.total_tokens = 150
+
+        # Set up usage attributes - use spec to prevent auto-creation of input_tokens
+        mock_usage = MagicMock(spec=['prompt_tokens', 'completion_tokens', 'total_tokens', 'prompt_tokens_details'])
+        mock_usage.prompt_tokens = 100
+        mock_usage.completion_tokens = 50
+        mock_usage.total_tokens = 150
 
         # Set up prompt_tokens_details for cached tokens
-        mock_response.usage.prompt_tokens_details.cached_tokens = 0
+        mock_usage.prompt_tokens_details = MagicMock()
+        mock_usage.prompt_tokens_details.cached_tokens = 0
+
+        mock_response.usage = mock_usage
 
         # Set up choices with finish_reason
         mock_choice = MagicMock()
         mock_choice.finish_reason = "stop"
         mock_response.choices = [mock_choice]
+
+        # CRITICAL FIX: Configure parse() to return self
+        mock_response.parse = MagicMock(return_value=mock_response)
 
         usage_data, _ = extract_usage_data(
             mock_response, OperationType.CHAT, "2023-01-01T12:00:00Z", "2023-01-01T12:00:01Z", 1000.0
@@ -244,14 +267,14 @@ class TestEmbeddingsMiddleware:
         """Create a mock OpenAI embeddings response object."""
         mock_response = MagicMock()
         mock_response.model = "text-embedding-3-small"
-        
+
         # Remove the 'id' attribute since embeddings responses don't have one
         del mock_response.id
-        
+
         # Set up usage attributes (embeddings only have prompt_tokens)
         mock_response.usage.prompt_tokens = 9
         mock_response.usage.total_tokens = 9
-        
+
         # Set up embeddings data
         mock_embedding = MagicMock()
         mock_embedding.embedding = [0.1] * 1536  # Mock 1536-dimensional embedding
@@ -259,7 +282,10 @@ class TestEmbeddingsMiddleware:
         mock_embedding.object = "embedding"
         mock_response.data = [mock_embedding]
         mock_response.object = "list"
-        
+
+        # CRITICAL FIX: Configure parse() to return self
+        mock_response.parse = MagicMock(return_value=mock_response)
+
         return mock_response
 
     @pytest.fixture
@@ -328,10 +354,10 @@ class TestEmbeddingsMiddleware:
         """Test that different embedding models are handled correctly."""
         models_to_test = [
             "text-embedding-3-small",
-            "text-embedding-3-large", 
+            "text-embedding-3-large",
             "text-embedding-ada-002"
         ]
-        
+
         for model in models_to_test:
             mock_response = MagicMock()
             mock_response.model = model
@@ -339,11 +365,14 @@ class TestEmbeddingsMiddleware:
             mock_response.usage.total_tokens = 10
             # Remove id attribute for embeddings
             del mock_response.id
-            
+
+            # CRITICAL FIX: Configure parse() to return self
+            mock_response.parse = MagicMock(return_value=mock_response)
+
             usage_data, transaction_id = extract_usage_data(
                 mock_response, OperationType.EMBED, "2024-01-01T00:00:00Z", "2024-01-01T00:00:01Z", 1000.0
             )
-            
+
             assert usage_data["model"] == model
             assert usage_data["operation_type"] == "EMBED"
             assert usage_data["provider"] == "OPENAI"
@@ -396,7 +425,7 @@ class TestEmbeddingsMiddleware:
             (1000, 1000), # Large input
             (0, 0),    # Edge case - zero tokens
         ]
-        
+
         for prompt_tokens, total_tokens in test_cases:
             mock_response = MagicMock()
             mock_response.model = "text-embedding-3-small"
@@ -404,11 +433,14 @@ class TestEmbeddingsMiddleware:
             mock_response.usage.total_tokens = total_tokens
             # Remove id attribute for embeddings
             del mock_response.id
-            
+
+            # CRITICAL FIX: Configure parse() to return self
+            mock_response.parse = MagicMock(return_value=mock_response)
+
             usage_data, transaction_id = extract_usage_data(
                 mock_response, OperationType.EMBED, "2024-01-01T00:00:00Z", "2024-01-01T00:00:01Z", 1000.0
             )
-            
+
             assert usage_data["input_token_count"] == prompt_tokens
             assert usage_data["total_token_count"] == total_tokens
             assert usage_data["output_token_count"] == 0  # Always 0 for embeddings
@@ -422,7 +454,10 @@ class TestEmbeddingsMiddleware:
         mock_response.usage.total_tokens = 10
         # Remove id attribute for embeddings
         del mock_response.id
-        
+
+        # CRITICAL FIX: Configure parse() to return self
+        mock_response.parse = MagicMock(return_value=mock_response)
+
         usage_data, _ = extract_usage_data(
             mock_response, OperationType.EMBED, "2024-01-01T00:00:00Z", "2024-01-01T00:00:01Z", 1000.0
         )
@@ -466,7 +501,10 @@ class TestEmbeddingsMiddleware:
         mock_embeddings_response.usage.total_tokens = 9
         # Remove id attribute for embeddings
         del mock_embeddings_response.id
-        
+
+        # CRITICAL FIX: Configure parse() to return self
+        mock_embeddings_response.parse = MagicMock(return_value=mock_embeddings_response)
+
         # Test extraction works
         usage_data, transaction_id = extract_usage_data(
             mock_embeddings_response, OperationType.EMBED, "2024-01-01T00:00:00Z", "2024-01-01T00:00:01Z", 1000.0

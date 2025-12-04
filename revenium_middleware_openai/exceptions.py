@@ -8,7 +8,7 @@ and more specific error information for different failure scenarios.
 
 class ReveniumMiddlewareError(Exception):
     """Base exception for all Revenium middleware errors."""
-    
+
     def __init__(self, message: str, original_error: Exception = None):
         super().__init__(message)
         self.original_error = original_error
@@ -63,7 +63,7 @@ class ModelResolutionError(ReveniumMiddlewareError):
 def handle_exception_safely(func):
     """
     Decorator to handle exceptions safely without breaking the main application flow.
-    
+
     This decorator ensures that middleware errors never propagate to break
     the user's application, following the principle of graceful degradation.
     """
@@ -82,34 +82,34 @@ def handle_exception_safely(func):
             logger = logging.getLogger("revenium_middleware.extension")
             logger.error(f"Unexpected error in {func.__name__}: {e}", exc_info=True)
             return None
-    
+
     return wrapper
 
 
 def categorize_exception(exception: Exception) -> ReveniumMiddlewareError:
     """
     Categorize a generic exception into a more specific Revenium middleware exception.
-    
+
     Args:
         exception: The original exception to categorize
-        
+
     Returns:
         A more specific ReveniumMiddlewareError subclass
     """
     error_message = str(exception)
     error_type = type(exception).__name__
-    
+
     # Network-related errors
     if any(keyword in error_message.lower() for keyword in ['connection', 'timeout', 'network', 'dns']):
         return NetworkError(f"Network error: {error_message}", exception)
-    
+
     # Authentication errors
     if any(keyword in error_message.lower() for keyword in ['auth', 'unauthorized', 'forbidden', 'api key']):
         return AuthenticationError(f"Authentication error: {error_message}", exception)
-    
+
     # Validation errors
     if any(keyword in error_type.lower() for keyword in ['value', 'type', 'attribute']):
         return ValidationError(f"Validation error: {error_message}", exception)
-    
+
     # Default to generic middleware error
     return ReveniumMiddlewareError(f"Middleware error ({error_type}): {error_message}", exception)

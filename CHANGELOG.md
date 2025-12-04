@@ -5,7 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.7] - 2025-11-14
+## [0.4.8] - 2025-12-03
+
+### Added
+- **Trace Visualization & Observability** - 9 new optional fields for distributed tracing and observability
+  - `environment` - Deployment environment with fallback detection (REVENIUM_ENVIRONMENT, ENVIRONMENT, DEPLOYMENT_ENV)
+  - `region` - Cloud region with AWS/Azure/GCP auto-detection (supports AWS_REGION, AZURE_REGION, GCP_REGION, etc.)
+  - `credential_alias` - Human-readable API key names for credential tracking
+  - `trace_type` - Workflow category identifier (validated, alphanumeric/hyphens/underscores, max 128 chars)
+  - `trace_name` - Human-readable trace instance label (auto-truncates at 256 chars)
+  - `parent_transaction_id` - Parent transaction reference for distributed tracing support
+  - `transaction_name` - Human-friendly operation name with task_type fallback
+  - `retry_number` - Retry attempt counter (0 for first attempt, 1+ for retries)
+  - `operation_subtype` - Additional operation context (e.g., 'function_call' for tool usage)
+- New module `trace_fields.py` for centralized field capture and validation logic
+- Auto-detection of operation types (CHAT, TOOL_CALL, EMBED, MODERATION) based on endpoint and request
+- Environment variable support for all trace fields with cloud provider fallbacks
+- Test coverage for trace visualization
+
+### Changed
+- Updated `log_token_usage()` signature with 9 new optional parameters (all backwards compatible)
+- Updated `create_metering_call()` to capture and pass trace fields from environment and metadata
+- Updated `create_wrapper()` and `embeddings_create_wrapper()` to capture request body for operation detection
+
+### Dependencies
+- Requires `revenium_middleware>=0.3.5` for trace field support in the metering API
 
 ## [0.4.7] - 2025-11-13
 

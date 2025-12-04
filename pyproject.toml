@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "revenium-middleware-openai"
-version = "0.4.7"
+version = "0.4.8"
 description = "A Python library that meters OpenAI usage to Revenium with optional LangChain integration."
 readme = "README.md"
 requires-python = ">=3.8"
@@ -15,7 +15,7 @@ authors = [
 dependencies = [
     "wrapt",
     "openai>=1.0.0",
-    "revenium_middleware>=0.3.4",
+    "revenium_middleware>=0.3.5",
     "python-dotenv>=0.19.0"
 ]
 keywords = ["openai", "middleware", "logging", "token-usage", "metering", "revenium", "langchain", "ai", "llm"]

@@ -5,4 +5,4 @@ This package contains example scripts demonstrating how to use the Revenium midd
 with OpenAI and Azure OpenAI APIs.
 """
 
-__version__ = "0.4.7"
+__version__ = "0.4.8"

@@ -23,27 +23,37 @@ A professional-grade Python middleware that seamlessly integrates with OpenAI an
 
 ## Getting Started
 
-### 1. Install Package
+**For complete examples and setup instructions, see [`examples/README.md`](https://github.com/revenium/revenium-middleware-openai-python/blob/HEAD/examples/README.md)**
+
+### 1. Create Project Directory
 
 ```bash
 # Create project directory and navigate to it
 mkdir my-openai-project
 cd my-openai-project
+```
 
+### 2. Create Virtual Environment
+
+```bash
 # Create virtual environment
 python -m venv .venv
 
 # Activate virtual environment
-source .venv/bin/activate
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+```
 
+### 3. Install Package
+
+```bash
 # Install packages (run after activation)
-pip install revenium-middleware-openai openai python-dotenv
+pip install revenium-middleware-openai
 
 # For LangChain support
 pip install revenium-middleware-openai[langchain]
 ```
 
-### 2. Configure Environment Variables
+### 4. Configure Environment Variables
 
 Create a `.env` file in your project root. See [`.env.example`](.env.example) for all available configuration options.
 
@@ -57,32 +67,30 @@ OPENAI_API_KEY=sk_your_openai_api_key_here
 
 **NOTE: Replace the placeholder values with your actual API keys.**
 
-### 3. Run Your First Example
+### 5. Run Your First Example
 
-**For complete examples and usage patterns, see [`examples/README.md`](examples/README.md).**
-
-**Quick start:**
+Download and run an example from the repository:
 
 ```bash
-# Run the getting started example
-python examples/getting_started.py
+curl -O https://raw.githubusercontent.com/revenium/revenium-middleware-openai-python/main/examples/getting_started.py
+python getting_started.py
 ```
 
-Or use this simple inline code:
+Or use this simple code:
 
 ```python
 from dotenv import load_dotenv
 import openai
+import revenium_middleware_openai  # Auto-initializes on import
 
 load_dotenv()  # Load environment variables from .env file
-
-import revenium_middleware_openai  # Auto-initializes on import, place after loading environment variables
-
 client = openai.OpenAI()
 # Your OpenAI API calls here - automatically metered
 ```
 
 **That's it!** The middleware automatically meters all OpenAI API calls.
+
+**For complete examples and setup instructions, see [`examples/README.md`](https://github.com/revenium/revenium-middleware-openai-python/blob/HEAD/examples/README.md)**
 
 ---
 
@@ -138,8 +146,25 @@ Add business context to track usage by organization, user, task type, or custom 
 | `agent` | AI agent or bot identifier | Distinguish between multiple AI agents or automation workflows in your system |
 | `response_quality_score` | Custom quality rating (0.0-1.0) | Track user satisfaction or automated quality metrics for model performance analysis |
 
+### Trace Visualization Fields (v0.4.8+)
+
+Enhanced observability fields for distributed tracing and analytics. These can be set via environment variables or passed in `usage_metadata`:
+
+| Field | Environment Variable | Description | Use Case |
+|-------|---------------------|-------------|----------|
+| `environment` | `REVENIUM_ENVIRONMENT` | Deployment environment (e.g., "production", "staging") | Track usage across different deployment environments; auto-detects from `ENVIRONMENT`, `DEPLOYMENT_ENV` |
+| `region` | `REVENIUM_REGION` | Cloud region identifier (e.g., "us-east-1", "eastus") | Multi-region deployment tracking; auto-detects from `AWS_REGION`, `AZURE_REGION`, `GCP_REGION` |
+| `credential_alias` | `REVENIUM_CREDENTIAL_ALIAS` | Human-readable API key name (e.g., "prod-openai-key") | Track which credential was used for credential rotation and security auditing |
+| `trace_type` | `REVENIUM_TRACE_TYPE` | Workflow category identifier (max 128 chars) | Group similar workflows (e.g., "customer-support", "data-analysis") for analytics |
+| `trace_name` | `REVENIUM_TRACE_NAME` | Human-readable trace label (max 256 chars) | Label trace instances (e.g., "Customer Support Chat", "Document Analysis") |
+| `parent_transaction_id` | `REVENIUM_PARENT_TRANSACTION_ID` | Parent transaction ID for distributed tracing | Link child operations to parent transactions across services |
+| `transaction_name` | `REVENIUM_TRANSACTION_NAME` | Human-friendly operation name | Label individual operations (e.g., "Generate Response", "Analyze Sentiment") |
+
+**Note:** `operation_type` and `operation_subtype` are automatically detected by the middleware based on the API endpoint and request parameters.
+
 **Resources:**
 - [API Reference](https://revenium.readme.io/reference/meter_ai_completion) - Complete metadata field documentation
+- [`.env.example`](.env.example) - Environment variable configuration examples
 
 ## Configuration Options
 
@@ -239,11 +264,7 @@ Both providers support:
 
 ## Logging
 
-Control log level via environment variable:
-
-```bash
-export REVENIUM_LOG_LEVEL=DEBUG  # DEBUG, INFO, WARNING, ERROR, CRITICAL
-```
+The middleware logs errors and warnings automatically. Logging is controlled by the upstream `revenium_middleware` package.
 
 ---
 

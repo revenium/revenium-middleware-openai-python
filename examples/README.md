@@ -44,6 +44,16 @@ AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
 AZURE_OPENAI_API_KEY=your_azure_key_here
 AZURE_OPENAI_DEPLOYMENT=gpt-4o
 AZURE_OPENAI_API_VERSION=2024-12-01-preview
+
+# Trace Visualization (Optional - for distributed tracing)
+REVENIUM_ENVIRONMENT=production
+REVENIUM_REGION=us-east-1
+REVENIUM_CREDENTIAL_ALIAS=openai-prod-key
+REVENIUM_TRACE_TYPE=workflow
+REVENIUM_TRACE_NAME=My Workflow
+REVENIUM_PARENT_TRANSACTION_ID=parent-txn-123
+REVENIUM_TRANSACTION_NAME=My Transaction
+REVENIUM_RETRY_NUMBER=0
 ```
 
 Get your Revenium API key: https://app.revenium.ai
@@ -136,6 +146,20 @@ Demonstrates:
 **Run it:**
 ```bash
 python examples/azure_streaming.py
+```
+
+### `trace_visualization_example.py` - Trace Visualization
+
+Demonstrates:
+- Basic trace visualization with environment variables
+- Distributed tracing with parent-child relationships
+- Retry tracking for failed operations
+- Multi-region deployment tracking
+- Custom trace categorization and naming
+
+**Run it:**
+```bash
+python examples/trace_visualization_example.py
 ```
 
 ### `langchain_async_examples.py` - LangChain Integration

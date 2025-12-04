@@ -1,7 +1,7 @@
 import datetime
 import logging
 import uuid
-from typing import Dict, Any, Optional, Set, Tuple
+from typing import Dict, Any, Optional, Tuple
 from enum import Enum
 
 import wrapt
@@ -16,6 +16,9 @@ from .exceptions import (
     ReveniumMiddlewareError, ValidationError, MeteringError,
     NetworkError, AuthenticationError, categorize_exception, handle_exception_safely
 )
+
+# LangChain integration utilities
+from .langchain._utils import is_langchain_available
 
 logger = logging.getLogger("revenium_middleware.extension")
 
@@ -58,11 +61,34 @@ def sanitize_for_logging(data: Any, max_depth: int = Config.MAX_SANITIZATION_DEP
 
 class OperationType(str, Enum):
     """Operation types for AI API calls."""
+    # Spec-compliant values matching revenium_metering API
     CHAT = "CHAT"
+    GENERATE = "GENERATE"
     EMBED = "EMBED"
-    # Future operation types can be added here:
-    # IMAGE = "IMAGE"
-    # AUDIO = "AUDIO"
+    CLASSIFY = "CLASSIFY"
+    SUMMARIZE = "SUMMARIZE"
+    TRANSLATE = "TRANSLATE"
+    TOOL_CALL = "TOOL_CALL"
+    RERANK = "RERANK"
+    SEARCH = "SEARCH"
+    MODERATION = "MODERATION"
+    VISION = "VISION"
+    TRANSFORM = "TRANSFORM"
+    GUARDRAIL = "GUARDRAIL"
+    OTHER = "OTHER"
+
+
+def map_operation_type_to_sdk(operation_type: OperationType) -> str:
+    """
+    Map middleware OperationType to SDK-expected operation_type values.
+
+    SDK expects: "CHAT", "GENERATE", "EMBED", "CLASSIFY", "SUMMARIZE", "TRANSLATE",
+                 "TOOL_CALL", "RERANK", "SEARCH", "MODERATION", "VISION", "TRANSFORM",
+                 "GUARDRAIL", "OTHER"
+
+    Since the enum values now match the SDK values, we can return the value directly.
+    """
+    return operation_type.value
 
 
 # Utility functions for token usage tracking
@@ -186,13 +212,27 @@ def extract_usage_data(response, operation_type: OperationType, request_time: st
         output_tokens = 0  # Embeddings don't produce output tokens
         total_tokens = response.usage.total_tokens
         stop_reason = "END"  # Embeddings always complete successfully
-    else:  # CHAT
-        input_tokens = response.usage.prompt_tokens
-        output_tokens = response.usage.completion_tokens
+    else:  # CHAT (includes Responses API which is mapped to CHAT for backend compatibility)
+        # Handle both Chat Completions and Responses API formats
+        # Responses API uses input_tokens/output_tokens, Chat uses prompt_tokens/completion_tokens
+        if hasattr(response.usage, 'input_tokens'):
+            # Responses API format
+            input_tokens = response.usage.input_tokens
+            output_tokens = response.usage.output_tokens
+        else:
+            # Chat Completions format
+            input_tokens = response.usage.prompt_tokens
+            output_tokens = response.usage.completion_tokens
+
         total_tokens = response.usage.total_tokens
-        # Determine finish reason from choices
-        openai_finish_reason = response.choices[0].finish_reason if response.choices else None
-        stop_reason = get_stop_reason(openai_finish_reason)
+
+        # Get stop reason - Responses API may not have choices
+        if hasattr(response, 'choices') and response.choices:
+            openai_finish_reason = response.choices[0].finish_reason
+            stop_reason = get_stop_reason(openai_finish_reason)
+        else:
+            # Responses API doesn't have choices, use default
+            stop_reason = "END"
 
     # Extract cached tokens (only available for chat completions)
     cached_tokens = 0
@@ -254,7 +294,17 @@ async def log_token_usage(
         system_fingerprint: Optional[str] = None,
         is_streamed: bool = False,
         time_to_first_token: int = 0,
-        operation_type: OperationType = OperationType.CHAT  # DEFAULT for backward compatibility
+        operation_type: OperationType = OperationType.CHAT,
+        # New trace visualization fields
+        environment: Optional[str] = None,
+        operation_subtype: Optional[str] = None,
+        retry_number: int = 0,
+        parent_transaction_id: Optional[str] = None,
+        transaction_name: Optional[str] = None,
+        region: Optional[str] = None,
+        credential_alias: Optional[str] = None,
+        trace_type: Optional[str] = None,
+        trace_name: Optional[str] = None,
 ) -> None:
     """Log token usage to Revenium."""
     if shutdown_event.is_set():
@@ -291,12 +341,10 @@ async def log_token_usage(
             }
 
     # Prepare arguments for create_completion
+    # Build completion args, only including non-None values for optional fields
     completion_args = {
         "cache_creation_token_count": cached_tokens,
         "cache_read_token_count": 0,
-        "input_token_cost": None,  # Let backend calculate from model pricing
-        "output_token_cost": None,  # Let backend calculate from model pricing
-        "total_cost": None,  # Let backend calculate from model pricing
         "output_token_count": completion_tokens,
         "cost_type": "AI",
         "model": model,
@@ -311,19 +359,52 @@ async def log_token_usage(
         "stop_reason": stop_reason,
         "total_token_count": total_tokens,
         "transaction_id": response_id,
-        "trace_id": usage_metadata.get("trace_id"),
-        "task_type": usage_metadata.get("task_type"),
-        "subscriber": subscriber if subscriber else None,
-        "organization_id": usage_metadata.get("organization_id") or usage_metadata.get("organizationId"),
-        "subscription_id": usage_metadata.get("subscription_id"),
-        "product_id": usage_metadata.get("product_id"),
-        "agent": usage_metadata.get("agent"),
-        "response_quality_score": usage_metadata.get("response_quality_score"),
         "is_streamed": is_streamed,
-        "operation_type": operation_type.value,  # Convert enum to string
+        "operation_type": map_operation_type_to_sdk(operation_type),  # Map to SDK-expected values
         "time_to_first_token": time_to_first_token,
-        "middleware_source": "PYTHON"
+        "middleware_source": "PYTHON",
     }
+
+    # Add optional fields only if they have values
+    if usage_metadata.get("trace_id"):
+        completion_args["trace_id"] = usage_metadata.get("trace_id")
+    if usage_metadata.get("task_type"):
+        completion_args["task_type"] = usage_metadata.get("task_type")
+    if subscriber:
+        completion_args["subscriber"] = subscriber
+    if usage_metadata.get("organization_id") or usage_metadata.get("organizationId"):
+        completion_args["organization_id"] = (
+            usage_metadata.get("organization_id") or
+            usage_metadata.get("organizationId")
+        )
+    if usage_metadata.get("subscription_id"):
+        completion_args["subscription_id"] = usage_metadata.get("subscription_id")
+    if usage_metadata.get("product_id"):
+        completion_args["product_id"] = usage_metadata.get("product_id")
+    if usage_metadata.get("agent"):
+        completion_args["agent"] = usage_metadata.get("agent")
+    if usage_metadata.get("response_quality_score"):
+        completion_args["response_quality_score"] = usage_metadata.get("response_quality_score")
+
+    # Add trace visualization fields only if they have values
+    if environment:
+        completion_args["environment"] = environment
+    if operation_subtype:
+        completion_args["operation_subtype"] = operation_subtype
+    if retry_number is not None:  # 0 is a valid value
+        completion_args["retry_number"] = retry_number
+    if parent_transaction_id:
+        completion_args["parent_transaction_id"] = parent_transaction_id
+    if transaction_name:
+        completion_args["transaction_name"] = transaction_name
+    if region:
+        completion_args["region"] = region
+    if credential_alias:
+        completion_args["credential_alias"] = credential_alias
+    if trace_type:
+        completion_args["trace_type"] = trace_type
+    if trace_name:
+        completion_args["trace_name"] = trace_name
 
     # Log the arguments at debug level
     logger.debug("Calling client.ai.create_completion with args: %s", completion_args)
@@ -353,21 +434,39 @@ async def log_token_usage(
             logger.debug("Metering call failed during shutdown - this is expected")
 
 
-def create_metering_call(response, operation_type: OperationType, request_time_dt, usage_metadata,
-                        client_instance: Optional[Any] = None, time_to_first_token: int = 0, is_streamed: bool = False):
+def create_metering_call(
+    response,
+    operation_type: OperationType,
+    request_time_dt,
+    usage_metadata,
+    client_instance: Optional[Any] = None,
+    time_to_first_token: int = 0,
+    is_streamed: bool = False,
+    request_body: Optional[Dict[str, Any]] = None
+):
     """
-    Unified function to create and execute metering calls for any operation type.
-    Reduces duplication between chat and embeddings wrappers.
+    Unified function to create and execute metering calls for any operation
+    type. Reduces duplication between chat and embeddings wrappers.
     """
+    # Import trace field functions
+    from .trace_fields import (
+        get_environment, get_region, get_credential_alias,
+        get_trace_type, get_trace_name, get_parent_transaction_id,
+        get_transaction_name, get_retry_number, detect_operation_type
+    )
+
     # Record timing
     response_time_dt = datetime.datetime.now(datetime.timezone.utc)
     response_time = response_time_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     request_time = request_time_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-    request_duration = (response_time_dt - request_time_dt).total_seconds() * 1000
+    request_duration = (
+        (response_time_dt - request_time_dt).total_seconds() * 1000
+    )
 
     # Extract usage data using unified function
     usage_data, transaction_id = extract_usage_data(
-        response, operation_type, request_time, response_time, request_duration, client_instance
+        response, operation_type, request_time, response_time,
+        request_duration, client_instance
     )
 
     # Override streaming and timing info
@@ -376,6 +475,54 @@ def create_metering_call(response, operation_type: OperationType, request_time_d
 
     # Get system fingerprint if available (chat only)
     system_fingerprint = getattr(response, 'system_fingerprint', None)
+
+    # Extract trace fields (usage_metadata takes precedence over env vars)
+    environment = usage_metadata.get('environment') or get_environment()
+    region = usage_metadata.get('region') or get_region()
+    credential_alias = (
+        usage_metadata.get('credentialAlias') or
+        usage_metadata.get('credential_alias') or
+        get_credential_alias()
+    )
+    trace_type = (
+        usage_metadata.get('traceType') or
+        usage_metadata.get('trace_type') or
+        get_trace_type()
+    )
+    trace_name = (
+        usage_metadata.get('traceName') or
+        usage_metadata.get('trace_name') or
+        get_trace_name()
+    )
+    parent_transaction_id = (
+        usage_metadata.get('parentTransactionId') or
+        usage_metadata.get('parent_transaction_id') or
+        get_parent_transaction_id()
+    )
+    transaction_name = (
+        usage_metadata.get('transactionName') or
+        usage_metadata.get('transaction_name') or
+        get_transaction_name(usage_metadata)
+    )
+    retry_number = usage_metadata.get(
+        'retryNumber',
+        usage_metadata.get('retry_number', get_retry_number())
+    )
+
+    # Detect operation type and subtype
+    provider = usage_data.get("provider", "OPENAI")
+    # Determine endpoint from operation_type
+    if operation_type == OperationType.CHAT:
+        endpoint = "/chat/completions"
+    elif operation_type == OperationType.EMBED:
+        endpoint = "/embeddings"
+    else:
+        endpoint = "/chat/completions"  # Default
+
+    operation_info = detect_operation_type(
+        provider, endpoint, request_body or {}
+    )
+    operation_subtype = operation_info.get('operationSubtype')
 
     # Create async metering call
     async def metering_call():
@@ -396,7 +543,17 @@ def create_metering_call(response, operation_type: OperationType, request_time_d
             system_fingerprint=system_fingerprint,
             is_streamed=is_streamed,
             time_to_first_token=time_to_first_token,
-            operation_type=operation_type  # Explicitly pass the operation type
+            operation_type=operation_type,
+            # New trace visualization fields
+            environment=environment,
+            operation_subtype=operation_subtype,
+            retry_number=retry_number,
+            parent_transaction_id=parent_transaction_id,
+            transaction_name=transaction_name,
+            region=region,
+            credential_alias=credential_alias,
+            trace_type=trace_type,
+            trace_name=trace_name,
         )
 
     # Start metering thread
@@ -411,12 +568,19 @@ def _extract_langchain_usage_metadata():
 
     LangChain stores context information in thread-local variables that we can access
     to get the usage_metadata that was passed to LangChain methods.
+
+    This is optional functionality - if LangChain is not installed, this function
+    gracefully returns an empty dict without logging errors.
     """
+    # Only attempt LangChain integration if LangChain is available
+    if not is_langchain_available():
+        return {}
+
     try:
         # Try to import LangChain context variables
-        from langchain_core.globals import get_llm_cache
-        from langchain_core.callbacks.manager import CallbackManagerForLLMRun
-        import contextvars
+        from langchain_core.globals import get_llm_cache  # noqa: F401
+        from langchain_core.callbacks.manager import CallbackManagerForLLMRun  # noqa: F401
+        import contextvars  # noqa: F401
 
         # Try to get the current context
         # LangChain uses context variables to store run information
@@ -466,6 +630,8 @@ def _extract_langchain_usage_metadata():
         return {}
 
     except Exception as e:
+        # Only log at debug level for unexpected errors during metadata extraction
+        # This is optional functionality, so we don't want to spam logs
         logger.debug(f"Error extracting LangChain usage_metadata: {e}")
         return {}
 
@@ -475,10 +641,13 @@ def embeddings_create_wrapper(wrapped, instance, args, kwargs):
     """Wraps the openai.embeddings.create method to log token usage."""
     logger.debug("OpenAI/Azure OpenAI embeddings.create wrapper called")
 
+    # Capture request body before modifications (for operation detection)
+    request_body = kwargs.copy()
+
     # Extract usage metadata and store it for later use
     usage_metadata = kwargs.pop("usage_metadata", {})
 
-    # Try to extract usage_metadata from LangChain context if not found in kwargs
+    # Try to extract usage_metadata from LangChain context if not found
     if not usage_metadata:
         usage_metadata = _extract_langchain_usage_metadata()
 
@@ -490,24 +659,38 @@ def embeddings_create_wrapper(wrapped, instance, args, kwargs):
     if is_azure_provider(provider):
         azure_config = get_azure_config()
         if not azure_config.is_valid():
-            logger.warning("Azure OpenAI detected but configuration is incomplete. "
-                         "Set AZURE_OPENAI_ENDPOINT for proper Azure support.")
+            logger.warning(
+                "Azure OpenAI detected but configuration is incomplete. "
+                "Set AZURE_OPENAI_ENDPOINT for proper Azure support."
+            )
         else:
-            logger.debug(f"Azure OpenAI configuration validated: {azure_config.to_dict()}")
+            logger.debug(
+                f"Azure OpenAI configuration validated: "
+                f"{azure_config.to_dict()}"
+            )
             azure_config.validate_deployment()
 
     # Record request time
     request_time_dt = datetime.datetime.now(datetime.timezone.utc)
-    logger.debug(f"Calling wrapped embeddings function with args: {args}, kwargs: {kwargs}")
+    logger.debug(
+        f"Calling wrapped embeddings function with args: {args}, "
+        f"kwargs: {kwargs}"
+    )
 
     # Call the original OpenAI function
     response = wrapped(*args, **kwargs)
 
     logger.debug("Handling embeddings response: %s", response)
 
-    # Create metering call using unified function - pass client instance for provider detection
-    create_metering_call(response, OperationType.EMBED, request_time_dt, usage_metadata,
-                        client_instance=getattr(instance, '_client', None))
+    # Create metering call using unified function
+    create_metering_call(
+        response,
+        OperationType.EMBED,
+        request_time_dt,
+        usage_metadata,
+        client_instance=getattr(instance, '_client', None),
+        request_body=request_body
+    )
 
     return response
 
@@ -516,14 +699,18 @@ def embeddings_create_wrapper(wrapped, instance, args, kwargs):
 def create_wrapper(wrapped, instance, args, kwargs):
     """
     Wraps the openai.ChatCompletion.create method to log token usage.
-    Handles both streaming and non-streaming responses for OpenAI and Azure OpenAI.
+    Handles both streaming and non-streaming responses for OpenAI and
+    Azure OpenAI.
     """
     logger.debug("OpenAI/Azure OpenAI chat.completions.create wrapper called")
+
+    # Capture request body before modifications (for operation detection)
+    request_body = kwargs.copy()
 
     # Extract usage metadata and store it for later use
     usage_metadata = kwargs.pop("usage_metadata", {})
 
-    # Try to extract usage_metadata from LangChain context if not found in kwargs
+    # Try to extract usage_metadata from LangChain context if not found
     if not usage_metadata:
         usage_metadata = _extract_langchain_usage_metadata()
 
@@ -537,7 +724,10 @@ def create_wrapper(wrapped, instance, args, kwargs):
             kwargs['stream_options'] = {}
         # Add include_usage flag to get token counts in the response
         kwargs['stream_options']['include_usage'] = True
-        logger.debug("Added include_usage to stream_options for accurate token counting in streaming response")
+        logger.debug(
+            "Added include_usage to stream_options for accurate token "
+            "counting in streaming response"
+        )
 
     # Detect provider and validate Azure config if needed
     client_instance = getattr(instance, '_client', None)
@@ -547,22 +737,31 @@ def create_wrapper(wrapped, instance, args, kwargs):
     if is_azure_provider(provider):
         azure_config = get_azure_config()
         if not azure_config.is_valid():
-            logger.warning("Azure OpenAI detected but configuration is incomplete. "
-                         "Set AZURE_OPENAI_ENDPOINT for proper Azure support.")
+            logger.warning(
+                "Azure OpenAI detected but configuration is incomplete. "
+                "Set AZURE_OPENAI_ENDPOINT for proper Azure support."
+            )
         else:
-            logger.debug(f"Azure OpenAI configuration validated: {azure_config.to_dict()}")
+            logger.debug(
+                f"Azure OpenAI configuration validated: "
+                f"{azure_config.to_dict()}"
+            )
             azure_config.validate_deployment()
 
     # Record request time
     request_time_dt = datetime.datetime.now(datetime.timezone.utc)
-    logger.debug(f"Calling wrapped function with args: {args}, kwargs: {kwargs}")
+    logger.debug(
+        f"Calling wrapped function with args: {args}, kwargs: {kwargs}"
+    )
 
     # Call the original OpenAI function
     response = wrapped(*args, **kwargs)
 
-    # Record time to first token (for non-streaming, this is the same as the full response time)
+    # Record time to first token (for non-streaming, same as full response)
     first_token_time_dt = datetime.datetime.now(datetime.timezone.utc)
-    time_to_first_token = int((first_token_time_dt - request_time_dt).total_seconds() * 1000)
+    time_to_first_token = int(
+        (first_token_time_dt - request_time_dt).total_seconds() * 1000
+    )
 
     # Handle based on response type
     if stream:
@@ -572,27 +771,42 @@ def create_wrapper(wrapped, instance, args, kwargs):
             response,
             request_time_dt,
             usage_metadata,
-            client_instance=getattr(instance, '_client', None)
+            client_instance=getattr(instance, '_client', None),
+            request_body=request_body
         )
     else:
         # For non-streaming responses (ChatCompletion)
         logger.debug("Handling non-streaming response: %s", response)
 
-        # Create metering call using unified function - pass client instance for provider detection
-        create_metering_call(response, OperationType.CHAT, request_time_dt, usage_metadata,
-                            client_instance=getattr(instance, '_client', None), time_to_first_token=time_to_first_token)
+        # Create metering call using unified function
+        create_metering_call(
+            response,
+            OperationType.CHAT,
+            request_time_dt,
+            usage_metadata,
+            client_instance=getattr(instance, '_client', None),
+            time_to_first_token=time_to_first_token,
+            request_body=request_body
+        )
 
         return response
 
 
-def handle_streaming_response(stream, request_time_dt, usage_metadata, client_instance: Optional[Any] = None):
+def handle_streaming_response(
+    stream,
+    request_time_dt,
+    usage_metadata,
+    client_instance: Optional[Any] = None,
+    request_body: Optional[Dict[str, Any]] = None
+):
     """
     Handle streaming responses from OpenAI/Azure OpenAI.
     Wraps the stream to collect metrics and log them after completion.
     Similar to the approach used in the Ollama middleware.
     """
 
-    # Create a wrapper for the streaming response with proper resource management
+    # Create a wrapper for the streaming response with proper resource
+    # management
     class StreamWrapper:
         def __init__(self, stream):
             self.stream = stream
@@ -606,7 +820,9 @@ def handle_streaming_response(stream, request_time_dt, usage_metadata, client_in
             self.final_usage = None
             self.completion_text = ""
             self.first_token_time = None
-            self.client_instance = client_instance  # Store for Azure provider detection
+            # Store for Azure provider detection
+            self.client_instance = client_instance
+            self.request_body = request_body
             self._closed = False
             self._usage_logged = False
 
@@ -673,11 +889,11 @@ def handle_streaming_response(stream, request_time_dt, usage_metadata, client_in
             if chunk.choices and chunk.choices[0].finish_reason:
                 self.finish_reason = chunk.choices[0].finish_reason
 
-            # Check if this is the special usage chunk (last chunk with empty choices array)
-            if hasattr(chunk, 'usage') and chunk.usage and (not chunk.choices or len(chunk.choices) == 0):
-                logger.debug(f"Found usage data in final chunk: {chunk.usage}")
+            # Check if this chunk has usage data (can be in final chunk with or without choices)
+            if hasattr(chunk, 'usage') and chunk.usage:
+                logger.debug(f"Found usage data in chunk: {chunk.usage}")
                 self.final_usage = chunk.usage
-                return
+                # Don't return yet - we still need to process the chunk for finish_reason etc.
 
             # Collect content for token estimation if needed
             if chunk.choices and hasattr(chunk.choices[0], 'delta') and hasattr(chunk.choices[0].delta, 'content') and \
@@ -748,8 +964,65 @@ def handle_streaming_response(stream, request_time_dt, usage_metadata, client_in
                 # Calculate time to first token if available
                 time_to_first_token = 0
                 if self.first_token_time:
-                    time_to_first_token = int((self.first_token_time - self.request_time_dt).total_seconds() * 1000)
+                    time_to_first_token = int(
+                        (self.first_token_time - self.request_time_dt)
+                        .total_seconds() * 1000
+                    )
                     logger.debug(f"Time to first token: {time_to_first_token}ms")
+
+                # Extract trace fields for streaming response
+                from .trace_fields import (
+                    get_environment, get_region, get_credential_alias,
+                    get_trace_type, get_trace_name,
+                    get_parent_transaction_id,
+                    get_transaction_name, get_retry_number,
+                    detect_operation_type
+                )
+
+                # Get trace fields (usage_metadata takes precedence)
+                environment = (
+                    self.usage_metadata.get('environment') or
+                    get_environment()
+                )
+                region = (
+                    self.usage_metadata.get('region') or
+                    get_region()
+                )
+                credential_alias = (
+                    self.usage_metadata.get('credentialAlias') or
+                    self.usage_metadata.get('credential_alias') or
+                    get_credential_alias()
+                )
+                trace_type = (
+                    self.usage_metadata.get('traceType') or
+                    self.usage_metadata.get('trace_type') or
+                    get_trace_type()
+                )
+                trace_name = (
+                    self.usage_metadata.get('traceName') or
+                    self.usage_metadata.get('trace_name') or
+                    get_trace_name()
+                )
+                parent_transaction_id = (
+                    self.usage_metadata.get('parentTransactionId') or
+                    self.usage_metadata.get('parent_transaction_id') or
+                    get_parent_transaction_id()
+                )
+                transaction_name = (
+                    self.usage_metadata.get('transactionName') or
+                    self.usage_metadata.get('transaction_name') or
+                    get_transaction_name(self.usage_metadata)
+                )
+                retry_number = self.usage_metadata.get(
+                    'retryNumber',
+                    self.usage_metadata.get('retry_number', get_retry_number())
+                )
+
+                # Detect operation type and subtype
+                operation_info = detect_operation_type(
+                    provider, "/chat/completions", self.request_body or {}
+                )
+                operation_subtype = operation_info.get('operationSubtype')
 
                 async def metering_call():
                     await log_token_usage(
@@ -760,7 +1033,9 @@ def handle_streaming_response(stream, request_time_dt, usage_metadata, client_in
                         total_tokens=total_tokens,
                         cached_tokens=cached_tokens,
                         stop_reason=stop_reason,
-                        request_time=self.request_time_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        request_time=self.request_time_dt.strftime(
+                            "%Y-%m-%dT%H:%M:%SZ"
+                        ),
                         response_time=response_time,
                         request_duration=int(request_duration),
                         usage_metadata=self.usage_metadata,
@@ -770,6 +1045,16 @@ def handle_streaming_response(stream, request_time_dt, usage_metadata, client_in
                         is_streamed=True,
                         time_to_first_token=time_to_first_token,
                         operation_type=OperationType.CHAT,
+                        # New trace visualization fields
+                        environment=environment,
+                        operation_subtype=operation_subtype,
+                        retry_number=retry_number,
+                        parent_transaction_id=parent_transaction_id,
+                        transaction_name=transaction_name,
+                        region=region,
+                        credential_alias=credential_alias,
+                        trace_type=trace_type,
+                        trace_name=trace_name,
                     )
 
                 thread = run_async_in_thread(metering_call())
@@ -777,3 +1062,231 @@ def handle_streaming_response(stream, request_time_dt, usage_metadata, client_in
 
     # Return the wrapped stream
     return StreamWrapper(iter(stream))
+
+
+@wrapt.patch_function_wrapper('openai.resources.responses', 'Responses.create')
+def responses_create_wrapper(wrapped, instance, args, kwargs):
+    """
+    Wraps the openai.responses.create method to log token usage.
+    Handles both streaming and non-streaming responses for OpenAI Responses API.
+
+    Note: The Responses API automatically includes usage data in streaming responses
+    without requiring stream_options configuration (unlike Chat Completions API).
+    """
+    logger.debug("OpenAI Responses API create wrapper called")
+
+    # Extract usage metadata and store it for later use
+    usage_metadata = kwargs.pop("usage_metadata", {})
+
+    # Try to extract usage_metadata from LangChain context if not found in kwargs
+    if not usage_metadata:
+        usage_metadata = _extract_langchain_usage_metadata()
+
+    # Check if this is a streaming request
+    stream = kwargs.get('stream', False)
+
+    # Record request time
+    request_time_dt = datetime.datetime.now(datetime.timezone.utc)
+    logger.debug(f"Calling wrapped responses function with args: {args}, kwargs: {kwargs}")
+
+    # Call the original OpenAI function
+    response = wrapped(*args, **kwargs)
+
+    # Record time to first token (for non-streaming, this is the same as the full response time)
+    first_token_time_dt = datetime.datetime.now(datetime.timezone.utc)
+    time_to_first_token = int((first_token_time_dt - request_time_dt).total_seconds() * 1000)
+
+    # Handle based on response type
+    if stream:
+        # For streaming responses
+        logger.debug("Handling streaming Responses API response")
+        return handle_streaming_responses(
+            response,
+            request_time_dt,
+            usage_metadata,
+            client_instance=getattr(instance, '_client', None)
+        )
+    else:
+        # For non-streaming responses
+        logger.debug("Handling non-streaming Responses API response: %s", response)
+
+        # Create metering call using unified function - pass client instance for provider detection
+        # Map Responses API to CHAT operation type for Revenium backend compatibility
+        # The backend does not yet support a separate RESPONSES operation type
+        create_metering_call(response, OperationType.CHAT, request_time_dt, usage_metadata,
+                            client_instance=getattr(instance, '_client', None),
+                            time_to_first_token=time_to_first_token)
+
+        return response
+
+
+def handle_streaming_responses(stream, request_time_dt, usage_metadata,
+                               client_instance: Optional[Any] = None):
+    """
+    Handle streaming responses from OpenAI Responses API.
+    Wraps the stream to collect metrics and log them after completion.
+    """
+
+    # Create a wrapper for the streaming response with proper resource management
+    class StreamResponseWrapper:
+        def __init__(self, stream):
+            self.stream = stream
+            self.chunks = []
+            self.response_id = None
+            self.model = None
+            self.request_time_dt = request_time_dt
+            self.usage_metadata = usage_metadata
+            self.final_usage = None
+            self.client_instance = client_instance  # Store for provider detection
+            self._closed = False
+            self._usage_logged = False
+            self.last_chunk = None  # Store the last chunk to extract usage data
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            if self._closed:
+                raise StopIteration("Stream has been closed")
+
+            try:
+                chunk = next(self.stream)
+                self._process_chunk(chunk)
+                self.last_chunk = chunk  # Store the last chunk
+                return chunk
+            except StopIteration:
+                self._finalize()
+                raise
+            except Exception as e:
+                # Ensure cleanup on any error
+                self._finalize()
+                logger.error(f"Error in streaming Responses API response: {e}")
+                raise
+
+        def __enter__(self):
+            """Context manager entry."""
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            """Context manager exit with cleanup."""
+            self._finalize()
+
+        def _finalize(self):
+            """Finalize the stream and log usage if not already done."""
+            if not self._usage_logged:
+                self._log_usage()
+                self._usage_logged = True
+            self._close_stream()
+
+        def _close_stream(self):
+            """Close the underlying stream if possible."""
+            if not self._closed:
+                try:
+                    if hasattr(self.stream, 'close'):
+                        self.stream.close()
+                except Exception as e:
+                    logger.debug(f"Error closing stream: {e}")
+                finally:
+                    self._closed = True
+
+        def _process_chunk(self, chunk):
+            # Extract response ID and model from the chunk if available
+            if self.response_id is None and hasattr(chunk, 'id'):
+                self.response_id = chunk.id
+            if self.model is None and hasattr(chunk, 'model'):
+                self.model = chunk.model
+
+            # Check if this is the final chunk with usage data
+            if hasattr(chunk, 'usage') and chunk.usage:
+                logger.debug(f"Found usage data in Responses API stream: {chunk.usage}")
+                self.final_usage = chunk.usage
+                return
+
+            # Store the chunk for later analysis
+            self.chunks.append(chunk)
+
+        def _log_usage(self):
+            if not self.chunks and not self.final_usage and not self.last_chunk:
+                return
+
+            # Record response time and calculate duration
+            response_time_dt = datetime.datetime.now(datetime.timezone.utc)
+            response_time = response_time_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+            request_duration = (response_time_dt - self.request_time_dt).total_seconds() * 1000
+
+            # Get token usage information
+            input_tokens = 0
+            output_tokens = 0
+            total_tokens = 0
+
+            # Get usage data from the final chunk or last chunk
+            if self.final_usage:
+                input_tokens = self.final_usage.input_tokens
+                output_tokens = self.final_usage.output_tokens
+                total_tokens = self.final_usage.total_tokens
+                logger.debug(
+                    f"Using token usage from Responses API stream final chunk: input={input_tokens}, "
+                    f"output={output_tokens}, total={total_tokens}")
+            elif self.last_chunk and hasattr(self.last_chunk, 'usage') and self.last_chunk.usage:
+                # Try to extract usage from the last chunk
+                input_tokens = self.last_chunk.usage.input_tokens
+                output_tokens = self.last_chunk.usage.output_tokens
+                total_tokens = self.last_chunk.usage.total_tokens
+                logger.debug(
+                    f"Using token usage from Responses API last chunk: input={input_tokens}, "
+                    f"output={output_tokens}, total={total_tokens}")
+            else:
+                # If we don't have usage data, log warning
+                logger.warning("No usage data found in streaming Responses API response!")
+
+            # Log the token usage
+            if self.response_id:
+                logger.debug(
+                    "Streaming Responses API token usage - response_id: %s, input: %d, output: %d, total: %d",
+                    self.response_id, input_tokens, output_tokens, total_tokens
+                )
+
+                # Detect provider and resolve model name for Azure
+                provider = detect_provider(self.client_instance,
+                                         getattr(self.client_instance, 'base_url', None)
+                                         if self.client_instance else None)
+                provider_metadata = get_provider_metadata(provider)
+
+                # Resolve model name for Azure deployments
+                raw_model_name = self.model or "unknown"
+                if is_azure_provider(provider) and raw_model_name != "unknown":
+                    base_url = getattr(self.client_instance, 'base_url', None) if self.client_instance else None
+                    headers = {}  # Headers would need to be passed from wrapper context
+                    resolved_model_name = resolve_azure_model_name(raw_model_name, base_url, headers)
+                    logger.debug(f"Azure Responses API streaming model resolution: {raw_model_name} -> "
+                                f"{resolved_model_name}")
+                else:
+                    resolved_model_name = raw_model_name
+
+                async def metering_call():
+                    await log_token_usage(
+                        response_id=self.response_id,
+                        model=resolved_model_name,
+                        prompt_tokens=input_tokens,
+                        completion_tokens=output_tokens,
+                        total_tokens=total_tokens,
+                        cached_tokens=0,
+                        stop_reason="END",
+                        request_time=self.request_time_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        response_time=response_time,
+                        request_duration=int(request_duration),
+                        usage_metadata=self.usage_metadata,
+                        provider=provider_metadata["provider"],
+                        model_source=provider_metadata["model_source"],
+                        system_fingerprint=None,
+                        is_streamed=True,
+                        time_to_first_token=0,
+                        # Map Responses API to CHAT operation type for Revenium backend compatibility
+                        operation_type=OperationType.CHAT,
+                    )
+
+                thread = run_async_in_thread(metering_call())
+                logger.debug("Streaming Responses API metering thread started: %s", thread)
+
+    # Return the wrapped stream
+    return StreamResponseWrapper(iter(stream))

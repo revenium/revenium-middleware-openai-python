@@ -13,7 +13,7 @@ import os
 import logging
 import threading
 from enum import Enum, auto
-from typing import Optional, Any
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger("revenium_middleware.extension")
 
@@ -86,7 +86,7 @@ def detect_provider(client: Optional[Any] = None, base_url: Optional[str] = None
     return Provider.OPENAI
 
 
-def get_provider_metadata(provider: Provider) -> dict:
+def get_provider_metadata(provider: Provider) -> Dict[str, str]:
     """
     Get provider-specific metadata for usage records.
     
@@ -162,7 +162,7 @@ def get_or_detect_provider(client: Optional[Any] = None, base_url: Optional[str]
     return _detected_provider
 
 
-def reset_provider_cache():
+def reset_provider_cache() -> None:
     """Reset provider detection cache. Useful for testing. Thread-safe implementation."""
     global _detected_provider, _provider_detection_attempted
     with _provider_lock:

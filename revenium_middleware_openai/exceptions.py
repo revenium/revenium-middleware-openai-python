@@ -5,16 +5,21 @@ This module defines a hierarchy of exceptions that provide better error handling
 and more specific error information for different failure scenarios.
 """
 
+from functools import wraps
+from typing import Any, Callable, Optional, TypeVar
+
+F = TypeVar('F', bound=Callable[..., Any])
+
 
 class ReveniumMiddlewareError(Exception):
     """Base exception for all Revenium middleware errors."""
 
-    def __init__(self, message: str, original_error: Exception = None):
+    def __init__(self, message: str, original_error: Optional[BaseException] = None) -> None:
         super().__init__(message)
         self.original_error = original_error
         self.message = message
 
-    def __str__(self):
+    def __str__(self) -> str:
         if self.original_error:
             return f"{self.message} (caused by: {self.original_error})"
         return self.message
@@ -60,30 +65,30 @@ class ModelResolutionError(ReveniumMiddlewareError):
     pass
 
 
-def handle_exception_safely(func):
+def handle_exception_safely(func: F) -> F:
     """
     Decorator to handle exceptions safely without breaking the main application flow.
 
     This decorator ensures that middleware errors never propagate to break
     the user's application, following the principle of graceful degradation.
     """
-    def wrapper(*args, **kwargs):
+    import logging
+    logger = logging.getLogger("revenium_middleware.extension")
+
+    @wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Optional[Any]:
         try:
             return func(*args, **kwargs)
         except ReveniumMiddlewareError as e:
             # Log middleware-specific errors
-            import logging
-            logger = logging.getLogger("revenium_middleware.extension")
             logger.error(f"Revenium middleware error in {func.__name__}: {e}")
             return None
         except Exception as e:
             # Log unexpected errors
-            import logging
-            logger = logging.getLogger("revenium_middleware.extension")
             logger.error(f"Unexpected error in {func.__name__}: {e}", exc_info=True)
             return None
 
-    return wrapper
+    return wrapper  # type: ignore[return-value]
 
 
 def categorize_exception(exception: Exception) -> ReveniumMiddlewareError:

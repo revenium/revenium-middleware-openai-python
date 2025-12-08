@@ -59,3 +59,20 @@ packages = ["revenium_middleware_openai", "revenium_middleware_openai.langchain"
 [tool.setuptools.package-data]
 "examples" = ["*.py", "*.md", "README.md"]
 "revenium_middleware_openai" = []
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+strict_optional = true
+no_implicit_optional = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "revenium_middleware_openai.*"
+disallow_untyped_defs = true
+warn_return_any = true

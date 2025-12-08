@@ -6,7 +6,7 @@ and provide a single source of truth for middleware behavior.
 """
 
 import os
-from typing import Set
+from typing import Any, Dict, Optional, Set
 
 
 class Config:
@@ -84,14 +84,14 @@ class SecurityConfig:
     }
 
 
-def get_config_value(key: str, default: any = None) -> any:
+def get_config_value(key: str, default: Optional[str] = None) -> Optional[str]:
     """
     Get configuration value from environment or use default.
-    
+
     Args:
         key: Configuration key (environment variable name)
         default: Default value if environment variable not set
-        
+
     Returns:
         Configuration value
     """
@@ -100,11 +100,11 @@ def get_config_value(key: str, default: any = None) -> any:
 
 def is_debug_enabled() -> bool:
     """Check if debug logging is enabled."""
-    log_level = get_config_value(Config.ENV_LOG_LEVEL, "INFO").upper()
-    return log_level == "DEBUG"
+    log_level = get_config_value(Config.ENV_LOG_LEVEL, "INFO")
+    return (log_level or "INFO").upper() == "DEBUG"
 
 
-def get_timeout_config() -> dict:
+def get_timeout_config() -> Dict[str, float]:
     """Get all timeout-related configuration."""
     return {
         'thread_join': Config.THREAD_JOIN_TIMEOUT,

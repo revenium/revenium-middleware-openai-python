@@ -19,8 +19,14 @@ from typing import Any, TYPE_CHECKING
 
 # Only import types during type checking to avoid runtime dependencies
 if TYPE_CHECKING:
-    from langchain.schema import BaseLanguageModel  # noqa: F401
-    from langchain.embeddings.base import Embeddings  # noqa: F401
+    try:
+        # LangChain 1.0+ uses langchain_core
+        from langchain_core.language_models import BaseLanguageModel  # noqa: F401
+        from langchain_core.embeddings import Embeddings  # noqa: F401
+    except ImportError:
+        # LangChain 0.x uses langchain.schema and langchain.embeddings.base
+        from langchain.schema import BaseLanguageModel  # noqa: F401
+        from langchain.embeddings.base import Embeddings  # noqa: F401
 
 # Import our enhanced dependency checking utilities
 from ._utils import require_langchain_or_raise, is_langchain_available  # noqa: F401

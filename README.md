@@ -55,7 +55,7 @@ pip install revenium-middleware-openai[langchain]
 
 ### 4. Configure Environment Variables
 
-Create a `.env` file in your project root. See [`.env.example`](.env.example) for all available configuration options.
+Create a `.env` file in your project root. See [`.env.example`](https://github.com/revenium/revenium-middleware-openai-python/blob/HEAD/.env.example) for all available configuration options.
 
 **Minimum required configuration:**
 
@@ -148,29 +148,148 @@ Add business context to track usage by organization, user, task type, or custom 
 
 ### Trace Visualization Fields (v0.4.8+)
 
-Enhanced observability fields for distributed tracing and analytics. These can be set via environment variables or passed in `usage_metadata`:
+Enhanced observability fields for distributed tracing and analytics. These fields help you track, debug, and analyze AI operations across your infrastructure.
 
-| Field | Environment Variable | Description | Use Case |
-|-------|---------------------|-------------|----------|
-| `environment` | `REVENIUM_ENVIRONMENT` | Deployment environment (e.g., "production", "staging") | Track usage across different deployment environments; auto-detects from `ENVIRONMENT`, `DEPLOYMENT_ENV` |
-| `region` | `REVENIUM_REGION` | Cloud region identifier (e.g., "us-east-1", "eastus") | Multi-region deployment tracking; auto-detects from `AWS_REGION`, `AZURE_REGION`, `GCP_REGION` |
-| `credential_alias` | `REVENIUM_CREDENTIAL_ALIAS` | Human-readable API key name (e.g., "prod-openai-key") | Track which credential was used for credential rotation and security auditing |
-| `trace_type` | `REVENIUM_TRACE_TYPE` | Workflow category identifier (max 128 chars) | Group similar workflows (e.g., "customer-support", "data-analysis") for analytics |
-| `trace_name` | `REVENIUM_TRACE_NAME` | Human-readable trace label (max 256 chars) | Label trace instances (e.g., "Customer Support Chat", "Document Analysis") |
-| `parent_transaction_id` | `REVENIUM_PARENT_TRANSACTION_ID` | Parent transaction ID for distributed tracing | Link child operations to parent transactions across services |
-| `transaction_name` | `REVENIUM_TRANSACTION_NAME` | Human-friendly operation name | Label individual operations (e.g., "Generate Response", "Analyze Sentiment") |
+#### Field Reference
 
-**Note:** `operation_type` and `operation_subtype` are automatically detected by the middleware based on the API endpoint and request parameters.
+| Field | Environment Variable | Description | Best Practice |
+|-------|---------------------|-------------|---------------|
+| `environment` | `REVENIUM_ENVIRONMENT` | Deployment environment (e.g., "production", "staging") | **Use env var** - Static per deployment; auto-detects from `ENVIRONMENT`, `DEPLOYMENT_ENV` |
+| `region` | `REVENIUM_REGION` | Cloud region identifier (e.g., "us-east-1", "eastus") | **Use env var** - Static per deployment; auto-detects from `AWS_REGION`, `AZURE_REGION`, `GCP_REGION` |
+| `credential_alias` | `REVENIUM_CREDENTIAL_ALIAS` | Human-readable API key name (e.g., "prod-openai-key") | **Use env var** - Identifies which credential is configured |
+| `trace_type` | `REVENIUM_TRACE_TYPE` | Workflow category identifier (max 128 chars, alphanumeric/hyphens/underscores) | **Either** - Env var for single-purpose deployments, usage_metadata for multi-purpose |
+| `trace_name` | `REVENIUM_TRACE_NAME` | Human-readable trace label (max 256 chars, auto-truncates) | **Either** - Env var for static names, usage_metadata for dynamic names |
+| `parent_transaction_id` | `REVENIUM_PARENT_TRANSACTION_ID` | Parent transaction ID for distributed tracing | **Use usage_metadata** - Should be unique per request chain |
+| `transaction_name` | `REVENIUM_TRANSACTION_NAME` | Human-friendly operation name | **Either** - Falls back to `task_type` if not set |
+| `retry_number` | `REVENIUM_RETRY_NUMBER` | Retry attempt number (0 = first attempt, 1+ = retries) | **Use usage_metadata** - Should change per retry attempt |
+
+**Auto-Detected Fields** (no configuration needed):
+- `operation_type` - Automatically detected from API endpoint (CHAT, EMBED, TOOL_CALL, MODERATION)
+- `operation_subtype` - Automatically detected from request parameters (e.g., "function_call" for tool use)
+
+#### Usage Examples
+
+**Static Fields (Environment Variables)**
+
+Best for deployment-wide values that don't change per request:
+
+```bash
+# .env file
+REVENIUM_ENVIRONMENT=production
+REVENIUM_REGION=us-east-1
+REVENIUM_CREDENTIAL_ALIAS=prod-openai-key
+REVENIUM_TRACE_TYPE=customer-support
+```
+
+**Dynamic Fields (usage_metadata)**
+
+Best for per-request values that change:
+
+```python
+from openai import OpenAI
+
+client = OpenAI()
+
+# Example 1: Retry logic with retry_number
+def call_with_retry(prompt: str, max_retries: int = 3):
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                usage_metadata={
+                    "retry_number": attempt,  # Track retry attempts
+                    "trace_id": "session-123",
+                    "task_type": "chat"
+                }
+            )
+            return response
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise
+            print(f"Retry {attempt + 1}/{max_retries} after error: {e}")
+
+# Example 2: Distributed tracing with parent_transaction_id
+def parent_operation():
+    """Parent operation that spawns child operations."""
+    parent_response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": "Analyze this document"}],
+        usage_metadata={
+            "trace_id": "analysis-session-456",
+            "transaction_name": "Document Analysis",
+            "task_type": "analysis"
+        }
+    )
+
+    # Get the transaction ID from the parent
+    parent_txn_id = parent_response.id
+
+    # Child operations reference the parent
+    child_response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": "Summarize findings"}],
+        usage_metadata={
+            "trace_id": "analysis-session-456",
+            "parent_transaction_id": parent_txn_id,  # Link to parent
+            "transaction_name": "Summarize Results",
+            "task_type": "summarization"
+        }
+    )
+
+    return parent_response, child_response
+
+# Example 3: Dynamic trace names per user session
+def handle_user_session(user_id: str, session_id: str, message: str):
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": message}],
+        usage_metadata={
+            "trace_id": session_id,
+            "trace_name": f"User {user_id} - Session {session_id}",  # Dynamic per session
+            "trace_type": "customer-support",
+            "transaction_name": "Chat Response",
+            "subscriber": {"id": user_id}
+        }
+    )
+    return response
+```
+
+**Combined Approach (Env Vars + usage_metadata)**
+
+Environment variables provide defaults, usage_metadata overrides per request:
+
+```python
+# .env file has:
+# REVENIUM_ENVIRONMENT=production
+# REVENIUM_REGION=us-east-1
+# REVENIUM_TRACE_TYPE=customer-support
+
+# Code can override or add to these:
+response = client.chat.completions.create(
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": "Hello"}],
+    usage_metadata={
+        # These override env vars:
+        "trace_type": "premium-support",  # Overrides REVENIUM_TRACE_TYPE
+        # These are request-specific:
+        "retry_number": 0,
+        "trace_id": "session-789",
+        "transaction_name": "Premium Chat"
+        # environment and region come from env vars
+    }
+)
+```
 
 **Resources:**
 - [API Reference](https://revenium.readme.io/reference/meter_ai_completion) - Complete metadata field documentation
-- [`.env.example`](.env.example) - Environment variable configuration examples
+- [`.env.example`](https://github.com/revenium/revenium-middleware-openai-python/blob/HEAD/.env.example) - Environment variable configuration examples
 
 ## Configuration Options
 
 ### Environment Variables
 
-For a complete list of all available environment variables with examples, see [`.env.example`](.env.example).
+For a complete list of all available environment variables with examples, see [`.env.example`](https://github.com/revenium/revenium-middleware-openai-python/blob/HEAD/.env.example).
 
 **Key variables:**
 - `REVENIUM_METERING_API_KEY` - Your Revenium API key (required)
@@ -178,10 +297,11 @@ For a complete list of all available environment variables with examples, see [`
 - `OPENAI_API_KEY` - Your OpenAI API key
 - `AZURE_OPENAI_ENDPOINT` - Azure OpenAI endpoint (for Azure)
 - `REVENIUM_LOG_LEVEL` - Logging level (DEBUG, INFO, WARNING, ERROR)
+- `REVENIUM_SELECTIVE_METERING` - Enable selective metering mode (default: false, see [Decorator Support](#decorator-support))
 
 ## Examples
 
-The package includes comprehensive examples in the [`examples/`](examples/) directory.
+The package includes comprehensive examples in the [`examples/`](https://github.com/revenium/revenium-middleware-openai-python/tree/HEAD/examples) directory.
 
 ### Getting Started
 
@@ -195,47 +315,89 @@ python examples/getting_started.py
 | ------------------------ | --------------------------- | -------------------------------- |
 | Basic Chat               | `openai_basic.py`           | Simple chat with metadata        |
 | Streaming Chat           | `openai_streaming.py`       | Streaming responses              |
+| Decorator Support        | `example_decorator.py`      | Automatic metadata injection     |
+| Trace Visualization      | `example_tracing.py`        | Distributed tracing & retry tracking |
 | Azure Basic              | `azure_basic.py`            | Azure OpenAI integration         |
 | Azure Streaming          | `azure_streaming.py`        | Azure streaming                  |
 | LangChain Async          | `langchain_async_examples.py` | LangChain with async support   |
 
-**See [`examples/README.md`](examples/README.md) for detailed documentation of all examples.**
+**For complete examples and setup instructions, see [`examples/README.md`](https://github.com/revenium/revenium-middleware-openai-python/blob/HEAD/examples/README.md)**
 
 ---
 
-## LangChain Integration
+## Decorator Support
 
-### Installation
+The middleware provides powerful decorators for automatic metadata injection, eliminating the need to pass `usage_metadata` to every API call.
 
-```bash
-pip install revenium-middleware-openai[langchain]
-```
+### `@revenium_metadata`
 
-This installs both `langchain` and `langchain-openai` packages required for LangChain integration.
-
-For LangChain integration examples and documentation, see [`examples/README.md`](examples/README.md#langchain-integration).
-
-Quick example:
+Automatically injects metadata into all OpenAI API calls within a function:
 
 ```python
-from langchain_openai import ChatOpenAI
-from revenium_middleware_openai.langchain import wrap
+from revenium_middleware import revenium_metadata
+from openai import OpenAI
 
-# Wrap your LLM with Revenium tracking
-llm = wrap(ChatOpenAI(model="gpt-4o-mini"))
+client = OpenAI()
 
-# Use normally - usage is automatically tracked
-response = llm.invoke("What is the meaning of life?")
-print(response.content)
+@revenium_metadata(
+    trace_id="session-12345",
+    task_type="customer-support",
+    organization_id="acme-corp"
+)
+def handle_customer_query(question: str):
+    # All OpenAI calls here automatically include the decorator metadata
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": question}]
+    )
+    return response.choices[0].message.content
 ```
 
-Features:
-- ✅ Zero-Touch Integration
-- ✅ Automatic Async Detection
-- ✅ Streaming Support
-- ✅ Embeddings Support
-- ✅ Thread Safe
-- ✅ Error Resilient
+### `@revenium_meter()` - Selective Metering
+
+Control which functions are metered by enabling selective metering mode, where only when `@revenium_meter()` is used the calls are metered when `REVENIUM_SELECTIVE_METERING=true`.
+
+**IMPORTANT:** To use selective metering, you **MUST** set the environment variable:
+
+**How it works:**
+- **When `REVENIUM_SELECTIVE_METERING=false` (default)**: ALL OpenAI API calls are automatically metered
+- **When `REVENIUM_SELECTIVE_METERING=true`**: ONLY calls inside `@revenium_meter()` decorated functions are metered
+
+```bash
+# In your .env file or environment
+REVENIUM_SELECTIVE_METERING=true
+```
+
+**Accepted values for `REVENIUM_SELECTIVE_METERING`:**
+- `"true"`, `"1"`, `"yes"`, `"on"` (case-insensitive) → Selective metering enabled
+- `"false"`, `"0"`, `"no"`, `"off"`, or unset → All calls metered (default)
+
+**Example:**
+
+```python
+from revenium_middleware import revenium_meter, revenium_metadata
+
+# Set in .env file:
+# REVENIUM_SELECTIVE_METERING=true
+
+@revenium_meter()
+@revenium_metadata(task_type="premium-feature")
+def premium_feature(prompt: str):
+    # ✅ This WILL be metered (decorated with @revenium_meter)
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response.choices[0].message.content
+
+def free_feature(prompt: str):
+    # ❌ This will NOT be metered (no @revenium_meter decorator)
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response.choices[0].message.content
+```
 
 ---
 

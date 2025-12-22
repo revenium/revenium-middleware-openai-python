@@ -11,13 +11,18 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("revenium_middleware.langchain")
 
-# Version compatibility pattern from LANGCHAIN_ARCHITECTURE.md
+# Version compatibility pattern - support both LangChain 0.x and 1.0+
 try:
-    from langchain.callbacks.base import BaseCallbackHandler, AsyncCallbackHandler
+    # LangChain 1.0+ uses langchain_core
+    from langchain_core.callbacks.base import BaseCallbackHandler, AsyncCallbackHandler
 except ImportError:
-    from langchain.callbacks.base import BaseCallbackHandler
-    class AsyncCallbackHandler(BaseCallbackHandler):  # shim for old LC
-        pass
+    try:
+        # LangChain 0.x uses langchain.callbacks.base
+        from langchain.callbacks.base import BaseCallbackHandler, AsyncCallbackHandler
+    except ImportError:
+        from langchain.callbacks.base import BaseCallbackHandler
+        class AsyncCallbackHandler(BaseCallbackHandler):  # shim for very old LC
+            pass
 
 
 def _safe(fn):
@@ -515,5 +520,7 @@ class UnifiedReveniumCallbackHandler(AsyncCallbackHandler):
         return {
             'active_runs': len(self._active_runs),
             'total_operations': len(self._operation_timings),
-            'has_revenium_middleware': self._meter_openai_call != self._fallback_metering_call
+            'has_revenium_middleware': (
+                self._create_metering_call != self._fallback_metering_call
+            )
         }

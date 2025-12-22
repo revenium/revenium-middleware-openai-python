@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## [0.5.0] - 2025-12-22
+
+### Added
+- **LangChain 1.0+ Support** - Full compatibility with LangChain 1.0 and later versions
+  - Updated imports to support both `langchain_core` (1.0+) and `langchain` (0.x) packages
+  - Added `langchain-core>=0.1.0` to optional dependencies
+  - Backward compatible with LangChain 0.x versions
+  - Updated callback handler to use `langchain_core.callbacks.base` with fallback
+  - Updated message imports to use `langchain_core.messages` with fallback
+  - Updated type hints to use `langchain_core.language_models` and `langchain_core.embeddings`
+  - All examples updated to support both LangChain versions
+- **E2E Testing Infrastructure** - Comprehensive end-to-end testing setup
+  - GitHub Actions workflow for E2E tests with manual trigger
+  - Local E2E test runner script (`run_e2e_tests_local.sh`)
+  - Support for testing with GitHub Variables (for disposable API keys)
+  - Flexible test suite options (all, examples-only, openai-only, azure-only, langchain-only)
+
+### Fixed
+- **Decorator Example Missing Import** - Fixed `example_decorator.py` missing middleware import
+  - Added `import revenium_middleware_openai.middleware` to ensure metering works correctly
+  - Previously, decorators would set metadata but no metering would occur (silent failure)
+- **README.md PyPI Compatibility** - Updated all relative URLs to absolute GitHub URLs
+  - Fixed 5 relative links that would break when README is displayed on PyPI
+  - All links now point to public repository: `https://github.com/revenium/revenium-middleware-openai-python`
+
+### Changed
+- Removed version constraint `<1` from LangChain dependency in `pyproject.toml`
+- Updated `unified_handler.py` with version-compatible import pattern
+- Updated `__init__.py` with version-compatible type imports
+- Updated `langchain_async_examples.py` with version-compatible message imports
+- Updated E2E workflow to use GitHub Variables instead of Secrets (avoids HTTP header masking)
+
+## [0.4.9] - 2025-12-18
+
+### Fixed
+- **Validation bypass for trace fields from usage_metadata** - `trace_type` and `trace_name` values from `usage_metadata` now properly validated
+  - Previously, values from `usage_metadata.get('traceType')` and `usage_metadata.get('traceName')` bypassed `validate_trace_type()` and `validate_trace_name()` functions
+  - This allowed special characters (@, !, spaces) in trace_type and trace_name values >256 chars not being truncated
+  - Fixed in both non-streaming (lines 487-496) and streaming (lines 1002-1011) code paths
+  - Now all trace field values are validated regardless of source (usage_metadata or environment variables)
+
 ## [0.4.8] - 2025-12-03
 
 ### Added

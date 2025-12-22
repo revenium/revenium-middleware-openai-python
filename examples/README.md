@@ -74,6 +74,8 @@ python getting_started.py
 - `getting_started.py` - Simple entry point with all metadata fields
 - `openai_basic.py` - Basic chat and embeddings
 - `openai_streaming.py` - Streaming responses
+- `example_decorator.py` - Decorator support for automatic metadata injection
+- `example_tracing.py` - Trace visualization and distributed tracing
 - `azure_basic.py` - Azure OpenAI integration
 - `azure_streaming.py` - Azure OpenAI streaming
 - `langchain_async_examples.py` - LangChain async integration
@@ -121,6 +123,124 @@ Demonstrates:
 **Run it:**
 ```bash
 python examples/openai_streaming.py
+```
+
+### `example_decorator.py` - Decorator Support
+
+Demonstrates automatic metadata injection using decorators - the cleanest way to add tracking without cluttering your code:
+
+**Key Features:**
+- `@revenium_metadata` - Automatically inject metadata into all OpenAI calls within a function
+- `@revenium_meter()` - Enable selective metering (requires `REVENIUM_SELECTIVE_METERING=true`)
+- Nested decorators - Inner decorators override outer metadata
+- Works with chat, embeddings, and streaming
+- Clean separation of business logic and tracking
+
+**⚠️ For Selective Metering:**
+To use `@revenium_meter()` for selective metering, set in your `.env` file:
+```bash
+REVENIUM_SELECTIVE_METERING=true
+```
+When enabled, ONLY functions decorated with `@revenium_meter()` will be metered.
+When disabled (default), ALL OpenAI calls are metered automatically.
+
+**Demonstrates:**
+- Single query with automatic metadata
+- Batch processing with shared metadata
+- Embeddings with metadata
+- Combined decorators (`@revenium_meter` + `@revenium_metadata`)
+- Nested decorators with metadata inheritance
+
+**Run it:**
+```bash
+python examples/example_decorator.py
+```
+
+**Example:**
+```python
+from revenium_middleware import revenium_metadata
+from openai import OpenAI
+
+client = OpenAI()
+
+@revenium_metadata(
+    trace_id="session-12345",
+    task_type="customer-support",
+    organization_id="acme-corp"
+)
+def handle_customer_query(question: str):
+    # All OpenAI calls here automatically include the decorator metadata
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": question}]
+    )
+    return response.choices[0].message.content
+```
+
+### `example_tracing.py` - Trace Visualization
+
+Comprehensive guide to trace visualization features for distributed tracing and observability:
+
+**Key Features:**
+- Retry tracking with `retry_number`
+- Distributed tracing with `parent_transaction_id`
+- Dynamic trace names per user session
+- Environment and region tracking
+- Complete multi-step workflow tracing
+
+**Demonstrates:**
+1. **Retry Tracking** - Proper use of `retry_number` to track retry attempts (0 = first attempt, 1+ = retries)
+2. **Distributed Tracing** - Linking child operations to parent transactions across services
+3. **Dynamic Trace Names** - Per-session/per-user trace identification
+4. **Environment/Region** - Static deployment info via env vars vs dynamic overrides
+5. **Complete Workflow** - Realistic multi-step scenario combining all features
+
+**Run it:**
+```bash
+python examples/example_tracing.py
+```
+
+**Example - Retry Tracking:**
+```python
+for attempt in range(max_retries):
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            usage_metadata={
+                "retry_number": attempt,  # Track retry attempts
+                "trace_id": "session-123",
+                "task_type": "chat"
+            }
+        )
+        break
+    except Exception as e:
+        if attempt == max_retries - 1:
+            raise
+```
+
+**Example - Distributed Tracing:**
+```python
+# Parent operation
+parent_response = client.chat.completions.create(
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": "Analyze document"}],
+    usage_metadata={
+        "trace_id": "analysis-456",
+        "transaction_name": "Document Analysis"
+    }
+)
+
+# Child operation links to parent
+child_response = client.chat.completions.create(
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": "Summarize"}],
+    usage_metadata={
+        "trace_id": "analysis-456",
+        "parent_transaction_id": parent_response.id,  # Link to parent
+        "transaction_name": "Summarize Results"
+    }
+)
 ```
 
 ### `azure_basic.py` - Azure OpenAI Basic

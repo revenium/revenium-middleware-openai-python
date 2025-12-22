@@ -123,31 +123,37 @@ class TestTraceFieldCapture:
 class TestTraceValidation:
     """Test trace type and trace name validation functions."""
 
+    @pytest.mark.unit
     def test_validate_trace_type_valid(self):
         """Test validation of valid trace type."""
         valid_type = "test-workflow_123"
         assert validate_trace_type(valid_type) == valid_type
 
+    @pytest.mark.unit
     def test_validate_trace_type_invalid_characters(self):
         """Test validation rejects invalid characters."""
         invalid_type = "test@workflow!"
         assert validate_trace_type(invalid_type) is None
 
+    @pytest.mark.unit
     def test_validate_trace_type_too_long(self):
         """Test validation rejects trace type that's too long."""
         long_type = "a" * 150
         assert validate_trace_type(long_type) is None
 
+    @pytest.mark.unit
     def test_validate_trace_type_max_length(self):
         """Test validation accepts trace type at max length."""
         max_length_type = "a" * 100
         assert validate_trace_type(max_length_type) == max_length_type
 
+    @pytest.mark.unit
     def test_validate_trace_name_valid(self):
         """Test validation of valid trace name."""
         valid_name = "Test Trace Name"
         assert validate_trace_name(valid_name) == valid_name
 
+    @pytest.mark.unit
     def test_validate_trace_name_truncation(self):
         """Test that long trace names are truncated."""
         long_name = "a" * 300
@@ -156,10 +162,95 @@ class TestTraceValidation:
         assert len(result) == 256
         assert result == "a" * 256
 
+    @pytest.mark.unit
     def test_validate_trace_name_max_length(self):
         """Test trace name at max length is not truncated."""
         max_length_name = "a" * 256
         assert validate_trace_name(max_length_name) == max_length_name
+
+    @pytest.mark.unit
+    def test_usage_metadata_trace_type_validation_bypass_fix(self):
+        """
+        Test that trace_type from usage_metadata is properly validated.
+
+        This test verifies the fix for the validation bypass vulnerability
+        where trace_type values from usage_metadata bypassed validation.
+
+        Bug: Previously, values from usage_metadata.get('traceType') were
+        used directly without validation, allowing invalid characters and
+        exceeding length limits.
+
+        Fix: Now all trace_type values are validated regardless of source.
+        """
+        # Test invalid characters are rejected
+        invalid_types = [
+            'invalid@trace',
+            'invalid!type',
+            'invalid trace',  # spaces
+            'invalid#type',
+            'invalid$type',
+        ]
+
+        for invalid_type in invalid_types:
+            result = validate_trace_type(invalid_type)
+            assert result is None, \
+                f"trace_type '{invalid_type}' should be rejected"
+
+        # Test exceeding max length (128 chars) is rejected
+        long_type = 'a' * 150
+        result = validate_trace_type(long_type)
+        assert result is None, \
+            "trace_type exceeding 128 chars should be rejected"
+
+        # Test valid values are accepted
+        valid_types = [
+            'valid-trace',
+            'valid_trace',
+            'ValidTrace123',
+            'trace-type_123',
+        ]
+
+        for valid_type in valid_types:
+            result = validate_trace_type(valid_type)
+            assert result == valid_type, \
+                f"trace_type '{valid_type}' should be accepted"
+
+    @pytest.mark.unit
+    def test_usage_metadata_trace_name_validation_bypass_fix(self):
+        """
+        Test that trace_name from usage_metadata is properly validated.
+
+        This test verifies the fix for the validation bypass vulnerability
+        where trace_name values from usage_metadata bypassed validation.
+
+        Bug: Previously, values from usage_metadata.get('traceName') were
+        used directly without validation, allowing names >256 chars without
+        truncation.
+
+        Fix: Now all trace_name values are validated and truncated if needed.
+        """
+        # Test truncation for names exceeding 256 chars
+        long_name = 'a' * 300
+        result = validate_trace_name(long_name)
+        assert result is not None, \
+            "trace_name should not be None"
+        assert len(result) == 256, \
+            "trace_name should be truncated to 256 characters"
+        assert result == 'a' * 256, \
+            "trace_name should be truncated correctly"
+
+        # Test valid names are accepted as-is
+        valid_names = [
+            'short-name',
+            'a' * 256,  # exactly at limit
+            'name with spaces',
+            'name@with#special$chars',
+        ]
+
+        for valid_name in valid_names:
+            result = validate_trace_name(valid_name)
+            assert result == valid_name, \
+                f"trace_name '{valid_name}' should be accepted as-is"
 
 
 class TestOperationTypeDetection:

@@ -5,7 +5,7 @@ from typing import Dict, Any, Optional, Tuple
 from enum import Enum
 
 import wrapt
-from revenium_middleware import client, run_async_in_thread, shutdown_event
+from revenium_middleware import client, run_async_in_thread, shutdown_event, merge_metadata
 
 # Azure OpenAI support imports
 from .provider import Provider, detect_provider, get_provider_metadata, is_azure_provider
@@ -452,7 +452,8 @@ def create_metering_call(
     from .trace_fields import (
         get_environment, get_region, get_credential_alias,
         get_trace_type, get_trace_name, get_parent_transaction_id,
-        get_transaction_name, get_retry_number, detect_operation_type
+        get_transaction_name, get_retry_number, detect_operation_type,
+        validate_trace_type, validate_trace_name
     )
 
     # Record timing
@@ -484,16 +485,20 @@ def create_metering_call(
         usage_metadata.get('credential_alias') or
         get_credential_alias()
     )
-    trace_type = (
+
+    # Validate trace_type from usage_metadata to prevent bypass
+    trace_type_raw = (
         usage_metadata.get('traceType') or
-        usage_metadata.get('trace_type') or
-        get_trace_type()
+        usage_metadata.get('trace_type')
     )
-    trace_name = (
+    trace_type = validate_trace_type(trace_type_raw) if trace_type_raw else get_trace_type()
+
+    # Validate trace_name from usage_metadata to prevent bypass
+    trace_name_raw = (
         usage_metadata.get('traceName') or
-        usage_metadata.get('trace_name') or
-        get_trace_name()
+        usage_metadata.get('trace_name')
     )
+    trace_name = validate_trace_name(trace_name_raw) if trace_name_raw else get_trace_name()
     parent_transaction_id = (
         usage_metadata.get('parentTransactionId') or
         usage_metadata.get('parent_transaction_id') or
@@ -644,12 +649,15 @@ def embeddings_create_wrapper(wrapped, instance, args, kwargs):
     # Capture request body before modifications (for operation detection)
     request_body = kwargs.copy()
 
-    # Extract usage metadata and store it for later use
-    usage_metadata = kwargs.pop("usage_metadata", {})
+    # Extract API-level metadata from kwargs
+    api_metadata = kwargs.pop("usage_metadata", {}) if "usage_metadata" in kwargs else {}
 
-    # Try to extract usage_metadata from LangChain context if not found
-    if not usage_metadata:
-        usage_metadata = _extract_langchain_usage_metadata()
+    # Try to extract usage_metadata from LangChain context if not found in kwargs
+    if not api_metadata:
+        api_metadata = _extract_langchain_usage_metadata()
+
+    # Merge with decorator metadata (API-level takes precedence)
+    usage_metadata = merge_metadata(api_metadata)
 
     # Detect provider and validate Azure config if needed
     client_instance = getattr(instance, '_client', None)
@@ -707,12 +715,15 @@ def create_wrapper(wrapped, instance, args, kwargs):
     # Capture request body before modifications (for operation detection)
     request_body = kwargs.copy()
 
-    # Extract usage metadata and store it for later use
-    usage_metadata = kwargs.pop("usage_metadata", {})
+    # Extract API-level metadata from kwargs
+    api_metadata = kwargs.pop("usage_metadata", {}) if "usage_metadata" in kwargs else {}
 
-    # Try to extract usage_metadata from LangChain context if not found
-    if not usage_metadata:
-        usage_metadata = _extract_langchain_usage_metadata()
+    # Try to extract usage_metadata from LangChain context if not found in kwargs
+    if not api_metadata:
+        api_metadata = _extract_langchain_usage_metadata()
+
+    # Merge with decorator metadata (API-level takes precedence)
+    usage_metadata = merge_metadata(api_metadata)
 
     # Check if this is a streaming request
     stream = kwargs.get('stream', False)
@@ -976,7 +987,8 @@ def handle_streaming_response(
                     get_trace_type, get_trace_name,
                     get_parent_transaction_id,
                     get_transaction_name, get_retry_number,
-                    detect_operation_type
+                    detect_operation_type,
+                    validate_trace_type, validate_trace_name
                 )
 
                 # Get trace fields (usage_metadata takes precedence)
@@ -993,16 +1005,20 @@ def handle_streaming_response(
                     self.usage_metadata.get('credential_alias') or
                     get_credential_alias()
                 )
-                trace_type = (
+
+                # Validate trace_type from usage_metadata to prevent bypass
+                trace_type_raw = (
                     self.usage_metadata.get('traceType') or
-                    self.usage_metadata.get('trace_type') or
-                    get_trace_type()
+                    self.usage_metadata.get('trace_type')
                 )
-                trace_name = (
+                trace_type = validate_trace_type(trace_type_raw) if trace_type_raw else get_trace_type()
+
+                # Validate trace_name from usage_metadata to prevent bypass
+                trace_name_raw = (
                     self.usage_metadata.get('traceName') or
-                    self.usage_metadata.get('trace_name') or
-                    get_trace_name()
+                    self.usage_metadata.get('trace_name')
                 )
+                trace_name = validate_trace_name(trace_name_raw) if trace_name_raw else get_trace_name()
                 parent_transaction_id = (
                     self.usage_metadata.get('parentTransactionId') or
                     self.usage_metadata.get('parent_transaction_id') or

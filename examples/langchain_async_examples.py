@@ -22,7 +22,12 @@ load_dotenv()
 
 # LangChain imports
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain.schema import HumanMessage, SystemMessage
+try:
+    # LangChain 1.0+ uses langchain_core
+    from langchain_core.messages import HumanMessage, SystemMessage
+except ImportError:
+    # LangChain 0.x uses langchain.schema
+    from langchain.schema import HumanMessage, SystemMessage
 
 # Revenium middleware imports
 from revenium_middleware_openai.langchain import wrap, attach_to

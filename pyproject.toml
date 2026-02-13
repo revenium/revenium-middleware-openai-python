@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
 authors = [
-  {name = "Revenium", email = "info@revenium.io"}
+  {name = "Revenium", email = "support@revenium.io"}
 ]
 dependencies = [
     "wrapt",

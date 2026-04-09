@@ -13,9 +13,11 @@ from .azure_model_resolver import resolve_azure_model_name
 from .azure_config import get_azure_config
 from .config import Config, SecurityConfig
 from .exceptions import (
-    ReveniumMiddlewareError, ValidationError, MeteringError,
-    NetworkError, AuthenticationError, categorize_exception, handle_exception_safely
+    ReveniumMiddlewareError, ReveniumCostLimitExceeded, ValidationError,
+    MeteringError, NetworkError, AuthenticationError, categorize_exception,
+    handle_exception_safely
 )
+from .enforcement import check_enforcement
 
 # LangChain integration utilities
 from .langchain._utils import is_langchain_available
@@ -761,6 +763,10 @@ def create_wrapper(wrapped, instance, args, kwargs):
 
     # Record request time
     request_time_dt = datetime.datetime.now(datetime.timezone.utc)
+
+    # Enforcement pre-call check — may raise ReveniumCostLimitExceeded
+    check_enforcement(usage_metadata)
+
     logger.debug(
         f"Calling wrapped function with args: {args}, kwargs: {kwargs}"
     )

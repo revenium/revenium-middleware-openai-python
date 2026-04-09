@@ -66,6 +66,9 @@ class Config:
     ENV_REVENIUM_TRANSACTION_NAME: str = "REVENIUM_TRANSACTION_NAME"
     ENV_REVENIUM_RETRY_NUMBER: str = "REVENIUM_RETRY_NUMBER"
 
+    # Enforcement / circuit breaker
+    ENV_CIRCUIT_BREAKER_ENABLED: str = "REVENIUM_CIRCUIT_BREAKER_ENABLED"
+
 
 class SecurityConfig:
     """Security-related configuration."""

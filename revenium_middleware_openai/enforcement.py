@@ -12,15 +12,14 @@ import logging
 import os
 import threading
 import time
+from typing import List, Optional
 
 from revenium_middleware import client
 
+from .config import Config
 from .exceptions import ReveniumCostLimitExceeded
 
 logger = logging.getLogger("revenium_middleware.extension")
-
-# Environment variable that enables the circuit breaker
-ENV_CIRCUIT_BREAKER_ENABLED = "REVENIUM_CIRCUIT_BREAKER_ENABLED"
 
 # How often to poll for updated rules (seconds)
 _POLL_INTERVAL = 60
@@ -28,27 +27,32 @@ _POLL_INTERVAL = 60
 _CACHE_TTL = 120
 
 # In-memory rule cache: list of rule dicts from the API
-_cached_rules = []
+_cached_rules: List[dict] = []
 _cache_lock = threading.Lock()
 _cache_timestamp = 0.0
 
 # Background polling thread
-_poll_thread = None
+_poll_thread: Optional[threading.Thread] = None
+_poll_lock = threading.Lock()
 _stop_event = threading.Event()
+
+# Serializes synchronous cache refreshes to prevent thundering herd
+_refresh_lock = threading.Lock()
 
 
 def is_circuit_breaker_enabled() -> bool:
     """Return True when the operator has opted in to enforcement."""
-    return os.environ.get(ENV_CIRCUIT_BREAKER_ENABLED, "").lower() in (
+    return os.environ.get(Config.ENV_CIRCUIT_BREAKER_ENABLED, "").lower() in (
         "1", "true", "yes", "on",
     )
 
 
-def _fetch_rules() -> list:
+def _fetch_rules() -> Optional[list]:
     """Fetch the current enforcement rules from the Revenium API.
 
-    Returns a list of rule dicts.  On any failure the previous cache is
-    preserved and an empty list is returned so callers can fall-open.
+    Returns a list of rule dicts on success (may be empty if the server
+    has no rules configured), or None on failure so the caller can
+    preserve the previous cache.
     """
     try:
         response = client.apis.meter_request(
@@ -68,7 +72,7 @@ def _fetch_rules() -> list:
         return []
     except Exception:
         logger.debug("Failed to fetch enforcement rules, falling open", exc_info=True)
-        return []
+        return None
 
 
 def _refresh_cache() -> None:
@@ -76,7 +80,7 @@ def _refresh_cache() -> None:
     global _cached_rules, _cache_timestamp
     rules = _fetch_rules()
     with _cache_lock:
-        if rules:
+        if rules is not None:
             _cached_rules = rules
         _cache_timestamp = time.monotonic()
 
@@ -91,15 +95,16 @@ def _poll_loop() -> None:
 def _ensure_poller_running() -> None:
     """Start the background polling thread if it isn't already running."""
     global _poll_thread
-    if _poll_thread is not None and _poll_thread.is_alive():
-        return
-    _stop_event.clear()
-    _poll_thread = threading.Thread(
-        target=_poll_loop,
-        name="revenium-enforcement-poll",
-        daemon=True,
-    )
-    _poll_thread.start()
+    with _poll_lock:
+        if _poll_thread is not None and _poll_thread.is_alive():
+            return
+        _stop_event.clear()
+        _poll_thread = threading.Thread(
+            target=_poll_loop,
+            name="revenium-enforcement-poll",
+            daemon=True,
+        )
+        _poll_thread.start()
 
 
 def _get_rules() -> list:
@@ -109,10 +114,14 @@ def _get_rules() -> list:
         age = now - _cache_timestamp
         rules = list(_cached_rules)
     if age > _CACHE_TTL:
-        # Stale — do a synchronous refresh before returning
-        _refresh_cache()
-        with _cache_lock:
-            rules = list(_cached_rules)
+        # Serialize stale-cache refreshes to prevent thundering herd
+        if _refresh_lock.acquire(blocking=False):
+            try:
+                _refresh_cache()
+                with _cache_lock:
+                    rules = list(_cached_rules)
+            finally:
+                _refresh_lock.release()
     return rules
 
 

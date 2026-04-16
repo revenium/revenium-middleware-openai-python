@@ -13,8 +13,9 @@ import os
 import threading
 import time
 from typing import List, Optional
+from urllib.parse import urlparse
 
-from revenium_middleware import client
+import httpx
 
 from .config import Config
 from .exceptions import ReveniumCostLimitExceeded
@@ -47,6 +48,19 @@ def is_circuit_breaker_enabled() -> bool:
     )
 
 
+def _get_enforcement_base_url() -> str:
+    """Derive the enforcement API base URL from the metering base URL.
+
+    The metering SDK points at e.g. ``https://api.revenium.ai/meter/``.
+    Enforcement rules live on the same origin at ``/v2/api/ai/enforcement-rules``.
+    """
+    metering_url = os.environ.get(
+        "REVENIUM_METERING_BASE_URL", "https://api.revenium.ai/meter/"
+    )
+    parsed = urlparse(metering_url)
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
 def _fetch_rules() -> Optional[list]:
     """Fetch the current enforcement rules from the Revenium API.
 
@@ -54,22 +68,21 @@ def _fetch_rules() -> Optional[list]:
     has no rules configured), or None on failure so the caller can
     preserve the previous cache.
     """
+    api_key = os.environ.get(Config.ENV_REVENIUM_API_KEY, "")
+    if not api_key:
+        logger.debug("No API key configured, skipping enforcement rule fetch")
+        return None
+
+    base_url = _get_enforcement_base_url()
     try:
-        response = client.apis.meter_request(
-            transaction_id="__enforcement_poll__",
-            method="GET",
-            resource="/v1/enforcement/rules",
-            source_type="SDK_PYTHON",
+        response = httpx.get(
+            f"{base_url}/v2/api/ai/enforcement-rules",
+            headers={"x-api-key": api_key},
+            timeout=10,
         )
-        # The API returns rules in the response body.
-        # Adapt to however the metering client surfaces them.
-        rules = getattr(response, "rules", None)
-        if rules is not None:
-            return list(rules)
-        # If the response is dict-like, try key access
-        if isinstance(response, dict):
-            return response.get("rules", [])
-        return []
+        response.raise_for_status()
+        data = response.json()
+        return data.get("rules", [])
     except Exception:
         logger.debug("Failed to fetch enforcement rules, falling open", exc_info=True)
         return None
@@ -125,7 +138,7 @@ def _get_rules() -> list:
     return rules
 
 
-def check_enforcement(usage_metadata: dict = None) -> None:
+def check_enforcement(usage_metadata: Optional[dict] = None) -> None:
     """Pre-call enforcement check.
 
     Call this before invoking the upstream OpenAI API.  If the circuit

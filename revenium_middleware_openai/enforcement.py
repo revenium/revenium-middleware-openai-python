@@ -40,6 +40,9 @@ _stop_event = threading.Event()
 # Serializes synchronous cache refreshes to prevent thundering herd
 _refresh_lock = threading.Lock()
 
+# Emit the missing-team-id warning only once
+_team_id_warned = False
+
 
 def is_circuit_breaker_enabled() -> bool:
     """Return True when the operator has opted in to enforcement."""
@@ -68,18 +71,33 @@ def _fetch_rules() -> Optional[list]:
     has no rules configured), or None on failure so the caller can
     preserve the previous cache.
     """
+    global _team_id_warned
+
     api_key = os.environ.get(Config.ENV_REVENIUM_API_KEY, "")
     if not api_key:
         logger.debug("No API key configured, skipping enforcement rule fetch")
         return None
 
+    team_id = os.environ.get(Config.ENV_REVENIUM_TEAM_ID, "")
+    if not team_id:
+        if not _team_id_warned:
+            logger.warning(
+                "REVENIUM_TEAM_ID is not set — enforcement rule polling disabled. "
+                "Set this to your hashed team ID to enable cost-limit enforcement."
+            )
+            _team_id_warned = True
+        return None
+
     base_url = _get_enforcement_base_url()
     try:
         response = httpx.get(
-            f"{base_url}/v2/api/ai/enforcement-rules",
+            f"{base_url}/v2/api/ai/enforcement-rules/{team_id}",
             headers={"x-api-key": api_key},
             timeout=10,
         )
+        # 204 No Content = no rules configured, cache empty list
+        if response.status_code == 204:
+            return []
         response.raise_for_status()
         data = response.json()
         return data.get("rules", [])

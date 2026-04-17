@@ -68,6 +68,7 @@ class Config:
 
     # Enforcement / circuit breaker
     ENV_CIRCUIT_BREAKER_ENABLED: str = "REVENIUM_CIRCUIT_BREAKER_ENABLED"
+    ENV_REVENIUM_TEAM_ID: str = "REVENIUM_TEAM_ID"
 
 
 class SecurityConfig:

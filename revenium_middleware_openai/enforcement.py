@@ -52,11 +52,15 @@ def is_circuit_breaker_enabled() -> bool:
 
 
 def _get_enforcement_base_url() -> str:
-    """Derive the enforcement API base URL from the metering base URL.
+    """Return the base URL for enforcement API calls.
 
-    The metering SDK points at e.g. ``https://api.revenium.ai/meter/``.
-    Enforcement rules live on the same origin at ``/v2/api/ai/enforcement-rules``.
+    Prefers ``REVENIUM_ENFORCEMENT_BASE_URL`` (allows a context-path such as
+    ``http://localhost:8080/profitstream``).  Falls back to the origin of the
+    metering base URL when unset.
     """
+    explicit = os.environ.get(Config.ENV_REVENIUM_ENFORCEMENT_BASE_URL, "")
+    if explicit:
+        return explicit.rstrip("/")
     metering_url = os.environ.get(
         "REVENIUM_METERING_BASE_URL", "https://api.revenium.ai/meter/"
     )

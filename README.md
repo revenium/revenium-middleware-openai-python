@@ -354,7 +354,7 @@ When a tripped rule matches the current request, the middleware raises `Revenium
 | `message` | `str` | Human-readable reason, e.g. `"Request blocked by Revenium enforcement rule: Monthly GPT-4 budget"` |
 | `args[0]` | `str` | Same as `message` (standard `BaseException` surface). |
 
-Structured fields (`rule_id`, `rule_name`, `current_value`, `threshold`, `resets_at`) are not yet surfaced — parse `message` for now. This is a documented gap; see the project roadmap.
+Structured fields (`rule_id`, `rule_name`, `current_value`, `threshold`, `resets_at`) are not yet surfaced — parse `message` for now. Tracked in [FRONT-992 — Cost Controls SDK v2](https://linear.app/revenium/issue/FRONT-992) alongside shadow mode and env-var normalization across SDKs.
 
 **Recommended handling pattern:**
 
@@ -381,11 +381,11 @@ except ReveniumCostLimitExceeded as e:
 
 Enforcement failures never propagate to user code. If the rule fetch errors (network failure, 5xx, auth issue), the previous cache is preserved and a debug log line is emitted. If there is no cache yet, enforcement behaves as if no rules are configured. Your OpenAI calls continue to work regardless of enforcement-API availability.
 
-This is hardcoded fail-open in v0.5.0; configurable fail-closed mode is not yet available.
+This is hardcoded fail-open in v0.5.0; configurable fail-closed mode is tracked in [FRONT-992](https://linear.app/revenium/issue/FRONT-992).
 
 ### Shadow Mode
 
-Not implemented in v0.5.0. Every rule with `blocked: true` raises. Shadow-only (log without raising) is on the roadmap alongside structured exception fields.
+Not implemented in v0.5.0. Every rule with `blocked: true` raises. Shadow-only (log without raising) is tracked in [FRONT-992](https://linear.app/revenium/issue/FRONT-992).
 
 ### End-to-End Snippet
 

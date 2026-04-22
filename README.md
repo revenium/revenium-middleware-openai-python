@@ -299,6 +299,127 @@ For a complete list of all available environment variables with examples, see [`
 - `REVENIUM_LOG_LEVEL` - Logging level (DEBUG, INFO, WARNING, ERROR)
 - `REVENIUM_SELECTIVE_METERING` - Enable selective metering mode (default: false, see [Decorator Support](#decorator-support))
 
+## Cost Controls / Enforcement
+
+Block OpenAI requests client-side when a Revenium cost-limit rule is tripped. When the circuit breaker is enabled, the middleware polls enforcement rules from the Revenium API in a background thread and raises `ReveniumCostLimitExceeded` **before** the outbound OpenAI call, preventing spend beyond the configured limit.
+
+### Install
+
+```bash
+pip install 'revenium-middleware-openai>=0.5.0'
+```
+
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|:--------:|-------------|
+| `REVENIUM_CIRCUIT_BREAKER_ENABLED` | ✓ | Set to `true` / `1` / `yes` / `on` to enable enforcement. Off by default. |
+| `REVENIUM_METERING_API_KEY` | ✓ | Revenium API key (`hak_...`). Same key used for metering; sent as `x-api-key` header on rule fetches. |
+| `REVENIUM_TEAM_ID` | ✓ | Hashed team ID. Path component in `/v2/api/ai/enforcement-rules/{teamId}`. Required — if unset, enforcement is skipped with a single warning. |
+| `REVENIUM_ENFORCEMENT_BASE_URL` | — | Base URL for the enforcement API, including any servlet context path (e.g. `http://localhost:8080/profitstream`). Falls back to the origin of `REVENIUM_METERING_BASE_URL` when unset. |
+| `REVENIUM_METERING_BASE_URL` | — | Metering API base URL. When `REVENIUM_ENFORCEMENT_BASE_URL` is unset, its origin is used for enforcement. Defaults to `https://api.revenium.ai/meter/`. |
+
+### Public API
+
+Enforcement auto-initializes when you import the middleware. No additional wiring is required:
+
+```python
+import revenium_middleware_openai  # auto-initializes metering + enforcement
+import openai
+
+client = openai.OpenAI()
+```
+
+The pre-call check is invoked automatically before every OpenAI request. When `REVENIUM_CIRCUIT_BREAKER_ENABLED` is falsy, it is a no-op. When enabled:
+
+1. A daemon thread (`revenium-enforcement-poll`) starts on first use.
+2. The thread polls `GET {REVENIUM_ENFORCEMENT_BASE_URL}/v2/api/ai/enforcement-rules/{REVENIUM_TEAM_ID}` every 60 seconds with the `x-api-key` header.
+3. Rules are cached in-process (120 s TTL, refresh-on-stale with thundering-herd guard).
+4. `204 No Content` is treated as "no rules configured" — the cache is cleared.
+
+**Threading model:** synchronous API; the poller is a daemon thread, so it shuts down with the interpreter. No asyncio integration.
+
+### Exception Contract
+
+```python
+from revenium_middleware_openai.exceptions import ReveniumCostLimitExceeded
+```
+
+When a tripped rule matches the current request, the middleware raises `ReveniumCostLimitExceeded` before the OpenAI call is made.
+
+**Current fields (v0.5.0):**
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `message` | `str` | Human-readable reason, e.g. `"Request blocked by Revenium enforcement rule: Monthly GPT-4 budget"` |
+| `args[0]` | `str` | Same as `message` (standard `BaseException` surface). |
+
+Structured fields (`rule_id`, `rule_name`, `current_value`, `threshold`, `resets_at`) are not yet surfaced — parse `message` for now. Tracked in [FRONT-992 — Cost Controls SDK v2](https://linear.app/revenium/issue/FRONT-992) alongside shadow mode and env-var normalization across SDKs.
+
+**Recommended handling pattern:**
+
+```python
+from revenium_middleware_openai.exceptions import ReveniumCostLimitExceeded
+import openai
+
+client = openai.OpenAI()
+
+try:
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": "Summarize the meeting notes"}],
+    )
+except ReveniumCostLimitExceeded as e:
+    # Spend-cap reached — surface a graceful message to the user,
+    # fall back to a cheaper model, queue the work, etc.
+    print(f"Cost limit reached: {e.message}")
+```
+
+`ReveniumCostLimitExceeded` does **not** inherit from `ReveniumMiddlewareError`, so the middleware's `handle_exception_safely` decorator never swallows it — it always reaches your `except` block.
+
+### Fail-Open Behavior
+
+Enforcement failures never propagate to user code. If the rule fetch errors (network failure, 5xx, auth issue), the previous cache is preserved and a debug log line is emitted. If there is no cache yet, enforcement behaves as if no rules are configured. Your OpenAI calls continue to work regardless of enforcement-API availability.
+
+This is hardcoded fail-open in v0.5.0; configurable fail-closed mode is tracked in [FRONT-992](https://linear.app/revenium/issue/FRONT-992).
+
+### Shadow Mode
+
+Not implemented in v0.5.0. Every rule with `blocked: true` raises. Shadow-only (log without raising) is tracked in [FRONT-992](https://linear.app/revenium/issue/FRONT-992).
+
+### End-to-End Snippet
+
+```bash
+# .env
+REVENIUM_CIRCUIT_BREAKER_ENABLED=true
+REVENIUM_METERING_API_KEY=hak_your_key_here
+REVENIUM_TEAM_ID=your_hashed_team_id
+REVENIUM_ENFORCEMENT_BASE_URL=https://api.revenium.ai/profitstream
+OPENAI_API_KEY=sk-...
+```
+
+```python
+from dotenv import load_dotenv
+import openai
+import revenium_middleware_openai  # noqa: F401 — auto-initialize
+from revenium_middleware_openai.exceptions import ReveniumCostLimitExceeded
+
+load_dotenv()
+
+client = openai.OpenAI()
+
+try:
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": "Hello"}],
+    )
+    print(response.choices[0].message.content)
+except ReveniumCostLimitExceeded as e:
+    print(f"Blocked by cost control: {e.message}")
+```
+
+---
+
 ## Examples
 
 The package includes comprehensive examples in the [`examples/`](https://github.com/revenium/revenium-middleware-openai-python/tree/HEAD/examples) directory.

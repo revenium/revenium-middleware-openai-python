@@ -60,6 +60,19 @@ class ModelResolutionError(ReveniumMiddlewareError):
     pass
 
 
+class ReveniumCostLimitExceeded(Exception):
+    """Raised when a Revenium enforcement rule blocks the request.
+
+    This intentionally does NOT inherit from ReveniumMiddlewareError so that
+    handle_exception_safely will never swallow it.  It must propagate to the
+    caller to enforce cost limits.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+
 def handle_exception_safely(func):
     """
     Decorator to handle exceptions safely without breaking the main application flow.
@@ -70,6 +83,9 @@ def handle_exception_safely(func):
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
+        except ReveniumCostLimitExceeded:
+            # Never swallow enforcement exceptions — they must reach the caller
+            raise
         except ReveniumMiddlewareError as e:
             # Log middleware-specific errors
             import logging

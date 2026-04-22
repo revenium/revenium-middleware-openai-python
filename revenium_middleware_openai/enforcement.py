@@ -104,7 +104,15 @@ def _fetch_rules() -> Optional[list]:
             return []
         response.raise_for_status()
         data = response.json()
-        return data.get("rules", [])
+        # Server currently returns `{"rules": [...], "compiledAt": ...}` but
+        # accept a bare list too so a future schema change does not silently
+        # AttributeError its way into a stale cache.
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return data.get("rules", [])
+        logger.warning("Unexpected enforcement response shape: %r", type(data).__name__)
+        return None
     except Exception:
         logger.debug("Failed to fetch enforcement rules, falling open", exc_info=True)
         return None

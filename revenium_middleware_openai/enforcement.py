@@ -178,9 +178,13 @@ def check_enforcement(usage_metadata: Optional[dict] = None) -> None:
     for rule in rules:
         if not isinstance(rule, dict):
             continue
-        # A rule is considered tripped when its ``blocked`` flag is set
-        blocked = rule.get("blocked", False)
-        if not blocked:
+        # A rule is considered tripped when the server marks it as
+        # ``breached`` (current schema) or ``blocked`` (legacy).  Skip
+        # rules running in shadow mode even when breached.
+        is_tripped = rule.get("breached", False) or rule.get("blocked", False)
+        if not is_tripped:
+            continue
+        if rule.get("shadowMode", False):
             continue
 
         credential = (usage_metadata or {}).get("subscriber_credential", "")
